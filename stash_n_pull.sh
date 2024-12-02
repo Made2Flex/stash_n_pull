@@ -19,9 +19,9 @@ ascii_art_header() {
     cat << 'EOF'
    _____  __                __            _   __        ____          __ __
   / ___/ / /_ ____ _ _____ / /_          / | / /       / __ \ __  __ / // /
-  \__ \ / __// __ `// ___// __ \ ______ /  |/ /______ / /_/ // / / // // / 
- ___/ // /_ / /_/ /(__  )/ / / //_____// /|  //_____// ____// /_/ // // /  
-/____/ \__/ \__,_//____//_/ /_/       /_/ |_/       /_/     \__,_//_//_/ 
+  \__ \ / __// __ `// ___// __ \ ______ /  |/ /______ / /_/ // / / // // /
+ ___/ // /_ / /_/ /(__  )/ / / //_____// /|  //_____// ____// /_/ // // /
+/____/ \__/ \__,_//____//_/ /_/       /_/ |_/       /_/     \__,_//_//_/
 EOF
 }
 
@@ -108,7 +108,7 @@ deps() {
 
 # Function to confirm user action
 confirm_action() {
-    printf "${LIGHT_BLUE}This script maintains git repos. Do You Want To Run It Now? (y/N): ${NC}" 
+    printf "${LIGHT_BLUE}This script maintains git repos. Do You Want To Run It Now? (y/N): ${NC}"
     read confirm
     if [[ ! $confirm =~ ^[Yy]$ && ! -z $confirm ]]; then
         echo -e "${RED}!! Operation cancelled.${NC} "
@@ -117,21 +117,25 @@ confirm_action() {
 }
 
 # Function to stash and pull in all directories under ~/src/
-stash_and_pull() {
+stash_pull() {
+    local git_count=0
+    # Process each directory
     for dir in $HOME/src/*/; do
         if [ -d "$dir" ]; then
-            if [ -d "$dir/.git" ]; then  # Check if it's a Git repository
+            if [ -d "$dir/.git" ]; then
+                git_count=$((git_count + 1))
                 echo -e "${GREEN}==>> Processing directory: $(basename "$dir")${NC}"
                 cd "$dir" || continue
-                #git stash
                 git pull --autostash --recurse-submodules
                 sleep 3
                 cd - > /dev/null || continue
             else
-                echo -e "${RED}==>> Skipping non-Git directory: $dir${NC}"
+                echo -e "${RED}   ~> Skipping non-Git directories: $(basename "$dir")${NC}"
             fi
         fi
     done
+    # Display the total count processed
+    echo -e "${MAGENTA} ->> Total Git directories Processed: $git_count ${NC}"
 }
 
 # Alchemist Den
@@ -141,8 +145,8 @@ main() {
     greet_user
     confirm_action
     deps
-    stash_and_pull
+    stash_pull
 }
 
-# call it !
+# Shazaaamm!
 main "$@"
