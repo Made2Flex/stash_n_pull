@@ -73,11 +73,44 @@ parse_arguments() {
     done
 }
 
+# Function to get deps
+deps() {
+    local required_deps=(bash git)
+    local missing_deps=()
+
+    for dep in "${required_deps[@]}"; do
+        if ! command -v "$dep" &> /dev/null; then
+            missing_deps+=("$dep")
+        fi
+    done
+
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        echo -e "${RED}==>> Missing dependencies: ${missing_deps[*]}${NC}"
+        echo -e "${LIGHT_BLUE}Do you want to install them? (y/N): ${NC}"
+        read -r confirm_install
+        if [[ $confirm_install =~ ^[Yy]$ ]]; then
+            echo -e "${ORANGE}==>> Installing dependencies...${NC}"
+            if command -v apt &> /dev/null; then
+                sudo apt update && sudo apt install -y "${missing_deps[@]}"
+            elif command -v pacman &> /dev/null; then
+                sudo pacman -Syu --noconfirm "${missing_deps[@]}"
+            else
+                echo -e "${RED}==>> No suitable package manager found.${NC}"
+                sleep 1
+                echo -e "${ORANGE}==>> Please install dependencies manually.${NC}"
+            fi
+        else
+            echo -e "${RED}==>> Installation cancelled.${NC}"
+            exit 1
+        fi
+    fi
+}
+
 # Function to confirm user action
 confirm_action() {
     printf "${LIGHT_BLUE}This script maintains git repos. Do You Want To Run It Now? (y/N): ${NC}" 
     read confirm
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+    if [[ ! $confirm =~ ^[Yy]$ && ! -z $confirm ]]; then
         echo -e "${RED}!! Operation cancelled.${NC} "
         exit 0
     fi
@@ -107,6 +140,7 @@ main() {
     show_ascii_header
     greet_user
     confirm_action
+    deps
     stash_and_pull
 }
 
