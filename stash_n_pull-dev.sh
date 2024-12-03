@@ -118,7 +118,8 @@ confirm_action() {
 
 # Function to stash and pull in all directories under ~/src/
 stash_pull() {
-    local git_count=0
+    local git_count=0      # variable to hold git count
+    local updated_dirs=()  # Array to hold updated directory names
     # Process each directory
     for dir in $HOME/src/*/; do
         if [ -d "$dir" ]; then
@@ -126,7 +127,12 @@ stash_pull() {
                 git_count=$((git_count + 1))
                 echo -e "${GREEN}==>> Processing directory: $(basename "$dir")${NC}"
                 cd "$dir" || continue
-                git pull --autostash --recurse-submodules
+                # Capture the output of git pull
+                local output=$(git pull --autostash --recurse-submodules)
+                # Check if the output indicates an update
+                if [[ $output == *"Updating"* || $output == *"Fast-forward"* ]]; then
+                    updated_dirs+=("$(basename "$dir")")  # Add to updated directories
+                fi
                 sleep 3
                 cd - > /dev/null || continue
             else
@@ -134,8 +140,20 @@ stash_pull() {
             fi
         fi
     done
-    # Display the total count processed
-    echo -e "${MAGENTA} ->> Total Git directories Processed: $git_count ${NC}"
+    # Display the total git directories found and total updated
+    if [ -z "$(ls -A $HOME/src/)" ]; then
+        echo -e "${RED}!!   ->> No directories found in $HOME/src/.${NC}"
+        exit 1
+    else
+        echo -e "${MAGENTA} ->> Total Git directories: $git_count ${NC}"
+        if [ $git_count -eq 0 ]; then
+            echo -e "${RED}!!   ->> No Git directories found.${NC}"
+        elif [ ${#updated_dirs[@]} -ne 0 ]; then
+            echo -e "${MAGENTA} ->> Updated Git directories: ${updated_dirs[*]} ${NC}"
+        else
+            echo -e "${MAGENTA} ->> No directories were updated.${NC}"
+        fi
+    fi
 }
 
 # Alchemist Den
