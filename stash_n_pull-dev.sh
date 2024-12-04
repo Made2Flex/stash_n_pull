@@ -125,7 +125,7 @@ stash_pull() {
         if [ -d "$dir" ]; then
             if [ -d "$dir/.git" ]; then
                 git_count=$((git_count + 1))
-                echo -e "${GREEN}==>> Processing directory: $(basename "$dir")${NC}"
+                echo -e "${GREEN}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
                 # Capture the output of git pull
                 local output=$(git pull --autostash --recurse-submodules)
@@ -133,10 +133,10 @@ stash_pull() {
                 if [[ $output == *"Updating"* || $output == *"Fast-forward"* ]]; then
                     updated_dirs+=("$(basename "$dir")")  # Add to updated directories
                 fi
-                sleep 3
+                sleep 2
                 cd - > /dev/null || continue
             else
-                echo -e "${RED}   ~> Skipping non-Git directories: $(basename "$dir")${NC}"
+                echo -e "${RED}   ~> Skipping non-Git repositories: $(basename "$dir")${NC}"
             fi
         fi
     done
@@ -145,13 +145,13 @@ stash_pull() {
         echo -e "${RED}!!   ->> No directories found in $HOME/src/.${NC}"
         exit 1
     else
-        echo -e "${MAGENTA} ->> Total Git directories: $git_count ${NC}"
+        echo -e "${MAGENTA} ->> Total Git repositories: $git_count ${NC}"
         if [ $git_count -eq 0 ]; then
-            echo -e "${RED}!!   ->> No Git directories found.${NC}"
+            echo -e "${RED}!!   ->> No Git repositories found.${NC}"
         elif [ ${#updated_dirs[@]} -ne 0 ]; then
-            echo -e "${MAGENTA} ->> Updated Git directories: ${updated_dirs[*]} ${NC}"
+            echo -e "${MAGENTA} ->> Updated Git repositories: ${updated_dirs[*]} ${NC}"
         else
-            echo -e "${MAGENTA} ->> No directories were updated.${NC}"
+            echo -e "${MAGENTA} ->> No repositories were updated.${NC}"
         fi
     fi
 }
