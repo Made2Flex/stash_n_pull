@@ -108,7 +108,7 @@ deps() {
 
 # Function to confirm user action
 confirm_action() {
-    printf "${LIGHT_BLUE}This script maintains git repos. Do You Want To Run It Now? (y/N): ${NC}"
+    printf "${LIGHT_BLUE}This script updates git repos. Do You Want To Run It Now? (y/N): ${NC}"
     read confirm
     if [[ ! $confirm =~ ^[Yy]$ && ! -z $confirm ]]; then
         echo -e "${RED}!! Operation cancelled.${NC} "
