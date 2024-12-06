@@ -131,6 +131,7 @@ stash_pull() {
                 local output=$(git pull --autostash --recurse-submodules)
                 # Check if the output indicates an update
                 if [[ $output == *"Updating"* || $output == *"Fast-forward"* ]]; then
+                    echo "$output"  # Display the full output only if there are updates
                     updated_dirs+=("$(basename "$dir")")  # Add to updated directories
                 fi
                 sleep 2
