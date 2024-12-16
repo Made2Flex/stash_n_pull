@@ -108,7 +108,7 @@ deps() {
 
 # Function to confirm user action
 confirm_action() {
-    printf "${LIGHT_BLUE}This script maintains git repos. Do You Want To Run It Now? (y/N): ${NC}"
+    printf "${LIGHT_BLUE}This script updates git repos. Do You Want To Run It Now? (y/N): ${NC}"
     read confirm
     if [[ ! $confirm =~ ^[Yy]$ && ! -z $confirm ]]; then
         echo -e "${RED}!! Operation cancelled.${NC} "
@@ -116,26 +116,82 @@ confirm_action() {
     fi
 }
 
+# Function to check if a repo is private and handle authentication
+is_it_private() {
+    local dir="$1"
+    local remote_url
+    
+    # Get the remote URL
+    remote_url=$(cd "$dir" && git remote get-url origin 2>/dev/null)
+    
+    # Check if remote URL contains 'https://' (more likely to need authentication), maybe?
+    if [[ "$remote_url" == https://* ]]; then
+        # Try a test fetch to check authentication
+        if ! (cd "$dir" && GIT_TERMINAL_PROMPT=0 git fetch --dry-run &>/dev/null); then
+            echo -e "${ORANGE} ->> Private repository detected: $(basename "$dir")${NC}"
+            printf "${LIGHT_BLUE}Do you want to enter credentials for this repo? (y/N): ${NC}"
+            read -r enter_creds
+            
+            if [[ $enter_creds =~ ^[Yy]$ ]]; then
+                # Store credentials temporarily
+                git config --global credential.helper 'cache --timeout=3600'
+                return 0
+            else
+                echo -e "${ORANGE}==>> Skipping private repository: $(basename "$dir")${NC}"
+                return 1
+            fi
+        fi
+    fi
+    
+    return 0  # Repository is accessible
+}
+
 # Function to stash and pull in all directories under ~/src/
 stash_pull() {
-    local git_count=0
+    local git_count=0      # variable to hold git count
+    local updated_dirs=()  # Array to hold updated directory names
     # Process each directory
     for dir in $HOME/src/*/; do
         if [ -d "$dir" ]; then
             if [ -d "$dir/.git" ]; then
                 git_count=$((git_count + 1))
-                echo -e "${GREEN}==>> Processing directory: $(basename "$dir")${NC}"
+                echo -e "${GREEN}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
-                git pull --autostash --recurse-submodules
-                sleep 3
+                
+                # Check if repository is private and handle authentication
+                if ! is_it_private "$dir"; then
+                    cd - > /dev/null || continue
+                    continue
+                fi
+                
+                # Capture the output of git pull
+                local output=$(git pull --autostash --recurse-submodules)
+                # Check if the output indicates an update
+                if [[ $output == *"Updating"* || $output == *"Fast-forward"* ]]; then
+                    echo "$output"  # Display the full output only if there are updates
+                    updated_dirs+=("$(basename "$dir")")  # Add to updated directories
+                fi
+                sleep 2
                 cd - > /dev/null || continue
             else
-                echo -e "${RED}   ~> Skipping non-Git directories: $(basename "$dir")${NC}"
+                echo -e "${RED}   ~> Skipping non-Git repositories: $(basename "$dir")${NC}"
             fi
         fi
     done
-    # Display the total count processed
-    echo -e "${MAGENTA} ->> Total Git directories Processed: $git_count ${NC}"
+    # Display the total git directories found and total updated
+    if [ -z "$(ls -A $HOME/src/)" ]; then
+        echo -e "${RED}!!   ->> No directories found in $HOME/src/.${NC}"
+        exit 1
+    else
+        echo -e "${MAGENTA} ->> Total Git repositories: $git_count ${NC}"
+        if [ $git_count -eq 0 ]; then
+            echo -e "${RED}!!   ->> No Git repositories found.${NC}"
+        elif [ ${#updated_dirs[@]} -ne 0 ]; then
+            echo -e "${MAGENTA} ->> Updated Git repositories: ${updated_dirs[*]} ${NC}"
+        else
+            echo -e "${MAGENTA} ->> No repositories were updated.${NC}"
+        fi
+    fi
 }
 
 # Alchemist Den
