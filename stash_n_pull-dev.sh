@@ -116,6 +116,36 @@ confirm_action() {
     fi
 }
 
+# Function to check if a repo is private and handle authentication
+is_it_private() {
+    local dir="$1"
+    local remote_url
+    
+    # Get the remote URL
+    remote_url=$(cd "$dir" && git remote get-url origin 2>/dev/null)
+    
+    # Check if remote URL contains 'https://' (more likely to need authentication), maybe?
+    if [[ "$remote_url" == https://* ]]; then
+        # Try a test fetch to check authentication
+        if ! (cd "$dir" && GIT_TERMINAL_PROMPT=0 git fetch --dry-run &>/dev/null); then
+            echo -e "${ORANGE} ->> Private repository detected: $(basename "$dir")${NC}"
+            printf "${LIGHT_BLUE}Do you want to enter credentials for this repo? (y/N): ${NC}"
+            read -r enter_creds
+            
+            if [[ $enter_creds =~ ^[Yy]$ ]]; then
+                # Store credentials temporarily
+                git config --global credential.helper 'cache --timeout=3600'
+                return 0
+            else
+                echo -e "${ORANGE}==>> Skipping private repository: $(basename "$dir")${NC}"
+                return 1
+            fi
+        fi
+    fi
+    
+    return 0  # Repository is accessible
+}
+
 # Function to stash and pull in all directories under ~/src/
 stash_pull() {
     local git_count=0      # variable to hold git count
@@ -127,6 +157,13 @@ stash_pull() {
                 git_count=$((git_count + 1))
                 echo -e "${GREEN}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
+                
+                # Check if repository is private and handle authentication
+                if ! is_it_private "$dir"; then
+                    cd - > /dev/null || continue
+                    continue
+                fi
+                
                 # Capture the output of git pull
                 local output=$(git pull --autostash --recurse-submodules)
                 # Check if the output indicates an update
