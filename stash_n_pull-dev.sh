@@ -36,7 +36,7 @@ show_ascii_header() {
 # Function to greet the user
 greet_user() {
     local username=$(whoami)
-    echo -e "${ORANGE}Hello, $username-sama!${NC}"
+    echo -e "${ORANGE}Hello, $username ${NC}"
 }
 
 # Function to display help information
