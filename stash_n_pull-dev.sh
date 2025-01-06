@@ -25,6 +25,12 @@ ascii_art_header() {
 EOF
 }
 
+# Function to check if running in a terminal and offer to open one if not
+get_script_path() {
+    # Resolve the full path of the current script
+    readlink -f "$0"
+}
+
 # Function to show ascii art header
 show_ascii_header() {
     echo -e "${BLUE}"
@@ -203,12 +209,15 @@ stash_pull() {
 run_src_builder() {
     local updated_dirs=("$@")  # Get the updated directories from arguments
     echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
-    if [ -f "./src_builder" ]; then
-        bash ./src_builder "${updated_dirs[@]}"
+    local script_dir
+    script_dir=$(dirname "$(get_script_path)")
+    if [ -f "$script_dir/src_builder" ]; then
+        bash "$script_dir/src_builder" "${updated_dirs[@]}"
     else
         echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
         exit 1
     fi
+
 }
 
 # Alchemist Den
