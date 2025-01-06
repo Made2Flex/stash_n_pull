@@ -148,8 +148,9 @@ is_it_private() {
 
 # Function to stash and pull in all directories under ~/src/
 stash_pull() {
-    local git_count=0      # variable to hold git count
+    local git_count=0      # Variable to hold git count
     local updated_dirs=()  # Array to hold updated directory names
+
     # Process each directory
     for dir in $HOME/src/*/; do
         if [ -d "$dir" ]; then
@@ -157,15 +158,16 @@ stash_pull() {
                 git_count=$((git_count + 1))
                 echo -e "${GREEN}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
-                
+
                 # Check if repository is private and handle authentication
                 if ! is_it_private "$dir"; then
                     cd - > /dev/null || continue
                     continue
                 fi
-                
+
                 # Capture the output of git pull
                 local output=$(git pull --autostash --recurse-submodules)
+
                 # Check if the output indicates an update
                 if [[ $output == *"Updating"* || $output == *"Fast-forward"* ]]; then
                     echo "$output"  # Display the full output only if there are updates
@@ -178,7 +180,8 @@ stash_pull() {
             fi
         fi
     done
-    # Display the total git directories found and total updated
+
+    # Display the total Git directories found and total updated
     if [ -z "$(ls -A $HOME/src/)" ]; then
         echo -e "${RED}!!   ->> No directories found in $HOME/src/.${NC}"
         exit 1
@@ -188,9 +191,23 @@ stash_pull() {
             echo -e "${RED}!!   ->> No Git repositories found.${NC}"
         elif [ ${#updated_dirs[@]} -ne 0 ]; then
             echo -e "${MAGENTA} ->> Updated Git repositories: ${updated_dirs[*]} ${NC}"
+            # Pass updated directories as arguments
+            run_src_builder "${updated_dirs[@]}"
         else
             echo -e "${MAGENTA} ->> No repositories were updated.${NC}"
         fi
+    fi
+}
+
+# Function to call src_builder.sh if there are updated repositories
+run_src_builder() {
+    local updated_dirs=("$@")  # Get the updated directories from arguments
+    echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
+    if [ -f "./src_builder" ]; then
+        bash ./src_builder "${updated_dirs[@]}"
+    else
+        echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
+        exit 1
     fi
 }
 
