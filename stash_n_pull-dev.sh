@@ -208,16 +208,38 @@ stash_pull() {
 # Function to call src_builder.sh if there are updated repositories
 run_src_builder() {
     local updated_dirs=("$@")  # Get the updated directories from arguments
-    echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
-    local script_dir
-    script_dir=$(dirname "$(get_script_path)")
-    if [ -f "$script_dir/src_builder" ]; then
-        bash "$script_dir/src_builder" "${updated_dirs[@]}"
-    else
-        echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
-        exit 1
-    fi
 
+    while true; do
+        # Prompt for user input using printf for colored text
+        printf "${MAGENTA}Do you want to build updated repos? (yes/no)${NC} "
+        read -rp "" answer
+
+        # Normalize the answer to lowercase
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
+
+        # Check the response
+        if [[ "$answer" == "yes" || "$answer" == "y" || -z "$answer" ]]; then
+            echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
+
+            # Get script directory
+            local script_dir
+            script_dir=$(dirname "$(get_script_path)")
+
+            # Check if src_builder exists and execute it
+            if [[ -f "$script_dir/src_builder" ]]; then
+                bash "$script_dir/src_builder" "${updated_dirs[@]}"
+            else
+                echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
+                exit 2
+            fi
+            break  # Exit the loop if answer is yes
+        elif [[ "$answer" == "no" || "$answer" == "n" ]]; then
+            echo -e "${ORANGE}==>> Exiting...${NC}"
+            exit 0
+        else
+            echo -e "${RED}Invalid input. Please respond with 'yes' or 'no'.${NC}"
+        fi
+    done
 }
 
 # Alchemist Den
