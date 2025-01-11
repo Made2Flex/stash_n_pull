@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail  # Improved error handling
+set -euo pipefail  # error handling
 # -e: exit on error
 # -u: treat unset variables as an error
 # -o pipefail: ensure pipeline errors are captured
@@ -22,6 +22,8 @@ ascii_art_header() {
   \__ \ / __// __ `// ___// __ \ ______ /  |/ /______ / /_/ // / / // // /
  ___/ // /_ / /_/ /(__  )/ / / //_____// /|  //_____// ____// /_/ // // /
 /____/ \__/ \__,_//____//_/ /_/       /_/ |_/       /_/     \__,_//_//_/
+
+                                                   Qnk6IE1hZGUyRmxleA==
 EOF
 }
 
@@ -179,7 +181,7 @@ stash_pull() {
                     echo "$output"  # Display the full output only if there are updates
                     updated_dirs+=("$(basename "$dir")")  # Add to updated directories
                 fi
-                sleep 2
+                sleep 1
                 cd - > /dev/null || continue
             else
                 echo -e "${RED}   ~> Skipping non-Git repositories: $(basename "$dir")${NC}"
@@ -208,31 +210,36 @@ stash_pull() {
 # Function to call src_builder.sh if there are updated repositories
 run_src_builder() {
     local updated_dirs=("$@")  # Get the updated directories from arguments
+    echo "Debug: Initial updated_dirs array contains: ${updated_dirs[@]}"
 
     while true; do
-        # Prompt for user input using printf for colored text
         printf "${MAGENTA}Do you want to build updated repos? (yes/no)${NC} "
         read -rp "" answer
 
-        # Normalize the answer to lowercase
-        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')  # Normalize input
 
-        # Check the response
         if [[ "$answer" == "yes" || "$answer" == "y" || -z "$answer" ]]; then
             echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
 
-            # Get script directory
             local script_dir
             script_dir=$(dirname "$(get_script_path)")
 
-            # Check if src_builder exists and execute it
             if [[ -f "$script_dir/src_builder" ]]; then
-                bash "$script_dir/src_builder" "${updated_dirs[@]}"
+                # Serialize updated_dirs array into a string
+                echo "Debug: Serializing updated_dirs array into a string: ${updated_dirs[@]}"
+                local updated_dirs_string
+                updated_dirs_string=$(printf '%s|' "${updated_dirs[@]}")
+                updated_dirs_string=${updated_dirs_string%|}  # Remove trailing pipe
+                echo "Debug: Serialized updated_dirs array string: $updated_dirs_string"
+
+
+                # Pass serialized string as an environment variable
+                UPDATED_DIRS="$updated_dirs_string" bash "$script_dir/src_builder"
             else
                 echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
                 exit 2
             fi
-            break  # Exit the loop if answer is yes
+            break
         elif [[ "$answer" == "no" || "$answer" == "n" ]]; then
             echo -e "${ORANGE}==>> Exiting...${NC}"
             exit 0
