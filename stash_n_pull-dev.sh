@@ -207,6 +207,50 @@ stash_pull() {
     fi
 }
 
+# Function to handle dependencies for src_builder
+deps_build() {
+    local required_deps=(make gcc cmake ninja)  # Core dependencies for building
+    local missing_deps=()
+
+    echo -e "${ORANGE}==>> Checking build dependencies...${NC}"
+    for dep in "${required_deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            missing_deps+=("$dep")
+        fi
+    done
+
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        echo -e "${RED}! Missing core build dependencies: ${missing_deps[*]}${NC}"
+        echo -e "${BLUE} >> Each repo has its own build dependencies. Refer to their README.md file.${NC}"
+
+        printf "${LIGHT_BLUE}Do you want to install them automatically? (y/N/pre-check only): ${NC}"
+        read -r response
+        response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+
+        if [[ "$response" == "y" || "$response" == "yes" || -z "$answer" ]]; then
+            echo -e "${ORANGE}  >> Installing missing dependencies...${NC}"
+            if command -v apt &>/dev/null; then
+                sudo apt update && sudo apt install -y "${missing_deps[@]}"
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -Syu --noconfirm "${missing_deps[@]}"
+            else
+                echo -e "${RED}  >> No supported package manager found. Please install dependencies manually.${NC}"
+                return 1
+            fi
+        elif [[ "$response" == "pre-check only" ]]; then
+            echo -e "${LIGHT_BLUE}==>> Pre-check completed. Please install the following manually: ${missing_deps[*]}${NC}"
+            return 1
+        else
+            echo -e "${RED}  >< Skipping dependency installation.${NC}"
+            return 1
+        fi
+    else
+        echo -e "${GREEN}==>> All required dependencies are already ✓installed.${NC}"
+    fi
+    return 0
+}
+
+
 # Function to call src_builder.sh if there are updated repositories
 run_src_builder() {
     local updated_dirs=("$@")  # Get the updated directories from arguments
@@ -220,6 +264,12 @@ run_src_builder() {
 
         if [[ "$answer" == "yes" || "$answer" == "y" || -z "$answer" ]]; then
             echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
+
+             # Check for build dependencies
+            if ! deps_build; then
+                echo -e "${RED}!! Dependencies check failed. Skipping build process.${NC}"
+                return 1
+            fi
 
             local script_dir
             script_dir=$(dirname "$(get_script_path)")
