@@ -228,13 +228,13 @@ deps_build() {
         response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
 
         if [[ "$response" == "y" || "$response" == "yes" || -z "$answer" ]]; then
-            echo -e "${ORANGE}  >> Installing missing dependencies...${NC}"
+            echo -e "${ORANGE} =>> Installing missing dependencies...${NC}"
             if command -v apt &>/dev/null; then
                 sudo apt update && sudo apt install -y "${missing_deps[@]}"
             elif command -v pacman &>/dev/null; then
                 sudo pacman -Syu --noconfirm "${missing_deps[@]}"
             else
-                echo -e "${RED}  >> No supported package manager found. Please install dependencies manually.${NC}"
+                echo -e "${RED} =>> No supported package manager found. Please install dependencies manually.${NC}"
                 return 1
             fi
         elif [[ "$response" == "pre-check only" ]]; then
@@ -245,7 +245,7 @@ deps_build() {
             return 1
         fi
     else
-        echo -e "${GREEN}==>> All required dependencies are already ✓installed.${NC}"
+        echo -e "${GREEN} =>> All required dependencies are already ✓installed.${NC}"
     fi
     return 0
 }
