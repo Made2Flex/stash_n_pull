@@ -7,6 +7,7 @@ set -euo pipefail  # error handling
 
 # Color definitions
 GREEN='\033[1;32m'
+DARK_GREEN='\033[0;32m'
 ORANGE='\033[1;33m'
 RED='\033[1;31m'
 BLUE='\033[0;34m'
@@ -14,16 +15,40 @@ MAGENTA='\033[1;35m'
 LIGHT_BLUE='\033[1;36m'
 NC='\033[0m' # No color
 
+dynamic_color() {
+    local message="$1"
+    #local colors=("red" "orange" "cyan" "magenta" "dark green" "blue")
+    local colors=("\033[1;31m" "\033[1;33m" "\033[1;36m" "\033[1;35m" "\033[0;32m" "\033[0;34m")
+    local NC="\033[0m"
+    local delay=0.1
+    local iterations=${2:-5}  # Default 30 iterations, but allow customization
+
+    {
+        for ((i=1; i<=iterations; i++)); do
+            # Cycle through colors
+            color=${colors[$((i % ${#colors[@]}))]}
+
+            # Use \r to return to start of line, update with new color
+            printf "\r${color}                                                   ${message}${NC}"
+
+            sleep "$delay"
+        done
+
+        # Final clear line
+        #printf "\r\033[K"
+        # Add a newline to move to the next line
+        printf "\n"
+    } >&2
+}
+
 # ASCII Art Header
-ascii_art_header() {
+ascii_header() {
     cat << 'EOF'
    _____  __                __            _   __        ____          __ __
   / ___/ / /_ ____ _ _____ / /_          / | / /       / __ \ __  __ / // /
   \__ \ / __// __ `// ___// __ \ ______ /  |/ /______ / /_/ // / / // // /
  ___/ // /_ / /_/ /(__  )/ / / //_____// /|  //_____// ____// /_/ // // /
 /____/ \__/ \__,_//____//_/ /_/       /_/ |_/       /_/     \__,_//_//_/
-
-                                                   Qnk6IE1hZGUyRmxleA==
 EOF
 }
 
@@ -33,12 +58,13 @@ get_script_path() {
     readlink -f "$0"
 }
 
-# Function to show ascii art header
+# Function to show ascii header
 show_ascii_header() {
+    # Print the header in blue
     echo -e "${BLUE}"
-    ascii_art_header
+    ascii_header
+    dynamic_color "Qnk6IE1hZGUyRmxleA=="
     echo -e "${NC}"
-    sleep 1
 }
 
 # Function to greet the user
@@ -221,7 +247,7 @@ deps_build() {
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
         echo -e "${RED}! Missing core build dependencies: ${missing_deps[*]}${NC}"
-        echo -e "${BLUE} >> Each repo has its own build dependencies. Refer to their README.md file.${NC}"
+        echo -e "${BLUE} =>> Each repo has its own build dependencies. Refer to their README.md file.${NC}"
 
         printf "${LIGHT_BLUE}Do you want to install them automatically? (y/N/pre-check only): ${NC}"
         read -r response
@@ -245,7 +271,7 @@ deps_build() {
             return 1
         fi
     else
-        echo -e "${GREEN} =>> All required dependencies are already ✓installed.${NC}"
+echo -e "${GREEN} =>> All required Core dependencies are already ✓installed.${NC}"
     fi
     return 0
 }
@@ -254,11 +280,10 @@ deps_build() {
 # Function to call src_builder.sh if there are updated repositories
 run_src_builder() {
     local updated_dirs=("$@")  # Get the updated directories from arguments
-    echo "Debug: Initial updated_dirs array contains: ${updated_dirs[@]}"
+    #echo "Debug: Initial updated_dirs array contains: ${updated_dirs[@]}"
 
     while true; do
-        printf "${MAGENTA}Do you want to build updated repos? (yes/no)${NC} "
-        read -rp "" answer
+        read -rp "$(echo -e "${LIGHT_BLUE}Do you want to build updated repos? (yes/no)${NC}")" answer
 
         answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')  # Normalize input
 
@@ -276,11 +301,11 @@ run_src_builder() {
 
             if [[ -f "$script_dir/src_builder" ]]; then
                 # Serialize updated_dirs array into a string
-                echo "Debug: Serializing updated_dirs array into a string: ${updated_dirs[@]}"
+                #echo "Debug: Serializing updated_dirs array into a string: ${updated_dirs[@]}"
                 local updated_dirs_string
                 updated_dirs_string=$(printf '%s|' "${updated_dirs[@]}")
                 updated_dirs_string=${updated_dirs_string%|}  # Remove trailing pipe
-                echo "Debug: Serialized updated_dirs array string: $updated_dirs_string"
+                #echo "Debug: Serialized updated_dirs array string: $updated_dirs_string"
 
 
                 # Pass serialized string as an environment variable
