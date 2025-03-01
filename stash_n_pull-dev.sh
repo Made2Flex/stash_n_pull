@@ -15,13 +15,13 @@ MAGENTA='\033[1;35m'
 LIGHT_BLUE='\033[1;36m'
 NC='\033[0m' # No color
 
-dynamic_color() {
+dynamic_me() {
     local message="$1"
     #local colors=("red" "orange" "cyan" "magenta" "dark green" "blue")
     local colors=("\033[1;31m" "\033[1;33m" "\033[1;36m" "\033[1;35m" "\033[0;32m" "\033[0;34m")
     local NC="\033[0m"
     local delay=0.1
-    local iterations=${2:-5}  # Default 30 iterations, but allow customization
+    local iterations=${2:-5}  # customize as needed
 
     {
         for ((i=1; i<=iterations; i++)); do
@@ -35,9 +35,8 @@ dynamic_color() {
         done
 
         # Final clear line
-        #printf "\r\033[K"
-        # Add a newline to move to the next line
-        printf "\n"
+        printf "\r\033[K"
+        #printf "\n"
     } >&2
 }
 
@@ -63,7 +62,7 @@ show_ascii_header() {
     # Print the header in blue
     echo -e "${BLUE}"
     ascii_header
-    dynamic_color "Qnk6IE1hZGUyRmxleA=="
+    dynamic_me "Qnk6IE1hZGUyRmxleA=="
     echo -e "${NC}"
 }
 
@@ -75,22 +74,23 @@ greet_user() {
 
 # Function to display help information
 show_help() {
-    echo "Usage: $0 [OPTIONS]"
+    echo -e "${MAGENTA}Maintains GitHub's Repositories${NC}"
     echo
-    echo "Maintains GitHub's Repositories"
+    echo -e "${LIGHT_BLUE}Usage:${NC} ${GREEN}$0${NC} ${BLUE}[OPTIONS]${NC}"
     echo
-    echo "Options:"
+    echo -e "${LIGHT_BLUE}Options:${NC}"
     echo "  -h, --help     Display this help message and exit"
     echo
-    echo "This script will:"
-    echo "  1. Stash changes"
-    echo "  2. Pull in new changes recursively with modules"
+    echo -e "${LIGHT_BLUE}This script will:${NC}"
+    echo -e "${GREEN}  1. Stash changes${NC}"
+    echo -e "${GREEN}  2. Pull in new changes recursively with modules${NC}"
+    echo -e "${GREEN}  3. Offer to build updated Repositories${NC}"
     echo
-    echo "Note: This script come as is, with 0 warranty!"
+    echo -e "Note: This script comes as is, with ${ORANGE}NO GUARANTEE!${NC}"
     exit 0
 }
 
-# Function to parse command line arguments
+# Function to parse help
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -98,7 +98,7 @@ parse_arguments() {
                 show_help
                 ;;
             *)
-                echo -e "${RED}Unknown option: $1${NC}"
+                echo -e "${RED}Error: This script does not accept arguments${NC}"
                 show_help
                 exit 1
                 ;;
@@ -150,42 +150,71 @@ confirm_action() {
     fi
 }
 
-# Function to check if a repo is private and handle authentication
+# Function to check if a repository is private
 is_it_private() {
-    local dir="$1"
+    local repo_dir="$1"
+    local git_config="$repo_dir/.git/config"
     local remote_url
-    
+
+    # Check if .git/config exists
+    if [[ ! -f "$git_config" ]]; then
+        echo -e "${RED}   ~> Not a valid Git repository: $(basename "$repo_dir")${NC}"
+        return 1
+    fi
+
     # Get the remote URL
-    remote_url=$(cd "$dir" && git remote get-url origin 2>/dev/null)
-    
-    # Check if remote URL contains 'https://' (more likely to need authentication), maybe?
-    if [[ "$remote_url" == https://* ]]; then
-        # Try a test fetch to check authentication
-        if ! (cd "$dir" && GIT_TERMINAL_PROMPT=0 git fetch --dry-run &>/dev/null); then
-            echo -e "${ORANGE} ->> Private repository detected: $(basename "$dir")${NC}"
-            printf "${LIGHT_BLUE}Do you want to enter credentials for this repo? (y/N): ${NC}"
-            read -r enter_creds
-            
-            if [[ $enter_creds =~ ^[Yy]$ ]]; then
-                # Store credentials temporarily
-                git config --global credential.helper 'cache --timeout=3600'
-                return 0
+    remote_url=$(git -C "$repo_dir" config --get remote.origin.url 2>/dev/null)
+
+    # Check if we got a valid URL
+    if [[ -z "$remote_url" ]]; then
+        echo -e "${YELLOW} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
+        return 1
+    fi
+
+    # First attempt to access without credentials
+    if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
+        return 0
+    else
+        echo -e "${YELLOW} ->> Repository appears to be private: $(basename "$repo_dir")${NC}"
+        
+        # Ask user if they want to enter credentials
+        printf "${LIGHT_BLUE}Would you like to enter credentials for this repo? (y/N): ${NC}"
+        read -r enter_creds
+        if [[ "$enter_creds" =~ ^[Yy]$ ]]; then
+            if [[ "$remote_url" =~ ^https:// ]]; then
+                echo -e "${BLUE} ->> HTTPS repository detected${NC}"
+                read -rp "Enter username: " git_username
+                read -rsp "Enter password: " git_password
+                echo
+                git -C "$repo_dir" config --local credential.helper "store --file ~/.git-credentials-temp"
+                echo "https://$git_username:$git_password@${remote_url#https://}" > ~/.git-credentials-temp
+                
+                # Test with credentials
+                if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
+                    return 0
+                else
+                    echo -e "${RED} ->> Authentication failed${NC}"
+                fi
             else
-                echo -e "${ORANGE}==>> Skipping private repository: $(basename "$dir")${NC}"
-                return 1
+                echo -e "${BLUE} ->> SSH repository detected - ensure your SSH key is properly configured${NC}"
             fi
         fi
+        
+        # Clean up temporary credentials
+        if [[ -f ~/.git-credentials-temp ]]; then
+            rm -f ~/.git-credentials-temp
+            git -C "$repo_dir" config --local --unset credential.helper
+        fi
+        
+        return 1
     fi
-    
-    return 0  # Repository is accessible
 }
 
 # Function to stash and pull in all directories under ~/src/
 stash_pull() {
-    local git_count=0      # Variable to hold git count
-    local updated_dirs=()  # Array to hold updated directory names
+    local git_count=0
+    local updated_dirs=()
 
-    # Process each directory
     for dir in $HOME/src/*/; do
         if [ -d "$dir" ]; then
             if [ -d "$dir/.git" ]; then
@@ -199,15 +228,21 @@ stash_pull() {
                     continue
                 fi
 
-                # Capture the output of git pull
-                local output=$(git pull --autostash --recurse-submodules)
+                # Get current and remote HEAD hashes
+                local current_hash=$(git rev-parse HEAD)
+                git fetch --quiet
+                local remote_hash=$(git rev-parse @{u})
 
-                # Check if the output indicates an update
-                if [[ $output == *"Updating"* || $output == *"Fast-forward"* ]]; then
-                    echo "$output"  # Display the full output only if there are updates
-                    updated_dirs+=("$(basename "$dir")")  # Add to updated directories
+                # Compare hashes to determine if updates are available
+                if [ "$current_hash" != "$remote_hash" ]; then
+                    # Perform the pull if updates are available
+                    git pull --autostash --recurse-submodules
+                    updated_dirs+=("$(basename "$dir")")
+                    echo -e "${BLUE}==>> Repository updated successfully${NC}"
+                else
+                    echo -e "${ORANGE}  => Repository is up-to-date${NC}"
                 fi
-                sleep 1
+
                 cd - > /dev/null || continue
             else
                 echo -e "${RED}   ~> Skipping non-Git repositories: $(basename "$dir")${NC}"
@@ -271,7 +306,7 @@ deps_build() {
             return 1
         fi
     else
-echo -e "${GREEN} =>> All required Core dependencies are already ✓installed.${NC}"
+        echo -e "${GREEN} =>> All required Core dependencies are ✓installed.${NC}"
     fi
     return 0
 }
