@@ -91,7 +91,7 @@ show_help() {
 }
 
 # Function to parse help
-parse_arguments() {
+parser() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)
@@ -361,7 +361,7 @@ run_src_builder() {
 
 # Alchemist Den
 main() {
-    parse_arguments "$@"
+    parser "$@"
     show_ascii_header
     greet_user
     confirm_action
