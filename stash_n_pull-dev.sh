@@ -171,7 +171,7 @@ is_it_private() {
         return 1
     fi
 
-    # First attempt to access without credentials
+    # attempt to access without credentials
     if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
         return 0
     else
@@ -189,7 +189,7 @@ is_it_private() {
                 git -C "$repo_dir" config --local credential.helper "store --file ~/.git-credentials-temp"
                 echo "https://$git_username:$git_password@${remote_url#https://}" > ~/.git-credentials-temp
                 
-                # Test with credentials
+                # Test credentials
                 if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
                     return 0
                 else
