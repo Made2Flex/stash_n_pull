@@ -3,7 +3,7 @@
 set -euo pipefail  # error handling
 # -e: exit on error
 # -u: treat unset variables as an error
-# -o pipefail: ensure pipeline errors are captured
+# -o: pipeline errors
 
 # Color definitions
 GREEN='\033[1;32m'
@@ -15,7 +15,7 @@ MAGENTA='\033[1;35m'
 LIGHT_BLUE='\033[1;36m'
 NC='\033[0m' # No color
 
-dynamic_me() {
+author() {
     local message="$1"
     #local colors=("red" "orange" "cyan" "magenta" "dark green" "blue")
     local colors=("\033[1;31m" "\033[1;33m" "\033[1;36m" "\033[1;35m" "\033[0;32m" "\033[0;34m")
@@ -40,8 +40,8 @@ dynamic_me() {
     } >&2
 }
 
-# ASCII Art Header
-ascii_header() {
+# Header
+header() {
     cat << 'EOF'
    _____  __                __            _   __        ____          __ __
   / ___/ / /_ ____ _ _____ / /_          / | / /       / __ \ __  __ / // /
@@ -51,18 +51,17 @@ ascii_header() {
 EOF
 }
 
-# Function to check if running in a terminal and offer to open one if not
+# Function to get the path of the script
 get_script_path() {
-    # Resolve the full path of the current script
     readlink -f "$0"
 }
 
-# Function to show ascii header
-show_ascii_header() {
+# Function to show header
+show_header() {
     # Print the header in blue
     echo -e "${BLUE}"
-    ascii_header
-    dynamic_me "Qnk6IE1hZGUyRmxleA=="
+    header
+    author "Qnk6IE1hZGUyRmxleA=="
     echo -e "${NC}"
 }
 
@@ -142,7 +141,7 @@ deps() {
 
 # Function to confirm user action
 confirm_action() {
-    printf "${LIGHT_BLUE}This script updates git repos. Do You Want To Run It Now? (y/N): ${NC}"
+    printf "${LIGHT_BLUE}This script updates git repositories. Do You Want To Continue? (y/N): ${NC}"
     read confirm
     if [[ ! $confirm =~ ^[Yy]$ && ! -z $confirm ]]; then
         echo -e "${RED}!! Operation cancelled.${NC} "
@@ -151,6 +150,7 @@ confirm_action() {
 }
 
 # Function to check if a repository is private
+# TODO: git doesn't accept passwords anymore. ask for keys
 is_it_private() {
     local repo_dir="$1"
     local git_config="$repo_dir/.git/config"
@@ -167,7 +167,7 @@ is_it_private() {
 
     # Check if we got a valid URL
     if [[ -z "$remote_url" ]]; then
-        echo -e "${YELLOW} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
+        echo -e "${ORANGE} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
         return 1
     fi
 
@@ -175,7 +175,7 @@ is_it_private() {
     if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
         return 0
     else
-        echo -e "${YELLOW} ->> Repository appears to be private: $(basename "$repo_dir")${NC}"
+        echo -e "${ORANGE} ->> Repository appears to be private: $(basename "$repo_dir")${NC}"
         
         # Ask user if they want to enter credentials
         printf "${LIGHT_BLUE}Would you like to enter credentials for this repo? (y/N): ${NC}"
@@ -233,7 +233,7 @@ stash_pull() {
                 git fetch --quiet
                 local remote_hash=$(git rev-parse @{u})
 
-                # Compare hashes to determine if updates are available
+                # Compare hashes
                 if [ "$current_hash" != "$remote_hash" ]; then
                     # Perform the pull if updates are available
                     git pull --autostash --recurse-submodules
@@ -245,7 +245,7 @@ stash_pull() {
 
                 cd - > /dev/null || continue
             else
-                echo -e "${RED}   ~> Skipping non-Git repositories: $(basename "$dir")${NC}"
+                echo -e "${RED}   ~> Skipping non-Git repository: $(basename "$dir")${NC}"
             fi
         fi
     done
@@ -255,21 +255,22 @@ stash_pull() {
         echo -e "${RED}!!   ->> No directories found in $HOME/src/.${NC}"
         exit 1
     else
-        echo -e "${MAGENTA} ->> Total Git repositories: $git_count ${NC}"
+        echo -e "${MAGENTA}==>> Total Git repositories:${NC} ${LIGHT_BLUE}$git_count ${NC}"
         if [ $git_count -eq 0 ]; then
             echo -e "${RED}!!   ->> No Git repositories found.${NC}"
         elif [ ${#updated_dirs[@]} -ne 0 ]; then
-            echo -e "${MAGENTA} ->> Updated Git repositories: ${updated_dirs[*]} ${NC}"
+            echo -e "${MAGENTA}==>> Updated Git repositories:${NC} ${LIGHT_BLUE}${updated_dirs[*]} ${NC}"
             # Pass updated directories as arguments
             run_src_builder "${updated_dirs[@]}"
         else
-            echo -e "${MAGENTA} ->> No repositories were updated.${NC}"
+            echo -e "${ORANGE}==>> No repositories were updated.${NC}"
         fi
     fi
 }
 
 # Function to handle dependencies for src_builder
-deps_build() {
+# TODO: Proper Pre-check
+build_deps() {
     local required_deps=(make gcc cmake ninja)  # Core dependencies for building
     local missing_deps=()
 
@@ -282,7 +283,7 @@ deps_build() {
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
         echo -e "${RED}! Missing core build dependencies: ${missing_deps[*]}${NC}"
-        echo -e "${BLUE} =>> Each repo has its own build dependencies. Refer to their README.md file.${NC}"
+        echo -e "${BLUE} =>> Note, each repo has its own build dependencies. Refer to their README.md file.${NC}"
 
         printf "${LIGHT_BLUE}Do you want to install them automatically? (y/N/pre-check only): ${NC}"
         read -r response
@@ -306,7 +307,7 @@ deps_build() {
             return 1
         fi
     else
-        echo -e "${GREEN} =>> All required Core dependencies are ✓installed.${NC}"
+        echo -e "${GREEN}  => All required Core dependencies are ✓installed.${NC}"
     fi
     return 0
 }
@@ -318,15 +319,15 @@ run_src_builder() {
     #echo "Debug: Initial updated_dirs array contains: ${updated_dirs[@]}"
 
     while true; do
-        read -rp "$(echo -e "${LIGHT_BLUE}Do you want to build updated repos? (yes/no)${NC}")" answer
+        read -rp "$(echo -e "${LIGHT_BLUE}Do you want to build updated repos? (yes/no/select)${NC}")" answer
 
         answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')  # Normalize input
 
         if [[ "$answer" == "yes" || "$answer" == "y" || -z "$answer" ]]; then
-            echo -e "${ORANGE}==>> Attempting to build updated repositories...${NC}"
+            echo -e "${ORANGE}==>> Attempting to build all updated repositories...${NC}"
 
-             # Check for build dependencies
-            if ! deps_build; then
+            # Check for build dependencies
+            if ! build_deps; then
                 echo -e "${RED}!! Dependencies check failed. Skipping build process.${NC}"
                 return 1
             fi
@@ -353,8 +354,57 @@ run_src_builder() {
         elif [[ "$answer" == "no" || "$answer" == "n" ]]; then
             echo -e "${ORANGE}==>> Exiting...${NC}"
             exit 0
+        elif [[ "$answer" == "select" || "$answer" == "s" ]]; then
+            echo -e "${ORANGE}==>> Please select the repositories you want to build:${NC}"
+            for i in "${!updated_dirs[@]}"; do
+                echo "$((i+1)). ${updated_dirs[$i]}"
+            done
+            read -rp "$(echo -e "${LIGHT_BLUE}Enter the numbers of the repositories you want to build (${NC}${MAGENTA}comma-separated${NC}${LIGHT_BLUE}):${NC}")" selected_indices
+
+            # Convert selected indices to array
+            IFS=',' read -r -a selected_indices <<< "$selected_indices"
+
+            # Filter updated_dirs based on selected indices
+            local selected_dirs=()
+            for index in "${selected_indices[@]}"; do
+                if [[ $index -ge 1 && $index -le ${#updated_dirs[@]} ]]; then
+                    selected_dirs+=("${updated_dirs[$((index-1))]}")
+                else
+                    echo -e "${RED}Invalid selection: $index${NC}"
+                fi
+            done
+
+            if [ ${#selected_dirs[@]} -eq 0 ]; then
+                echo -e "${RED}No valid repositories selected. Exiting...${NC}"
+                exit 1
+            fi
+
+            echo -e "${ORANGE}==>> Attempting to build selected repositories:${NC} ${LIGHT_BLUE}${selected_dirs[*]}${NC}"
+
+            # Check build dependencies
+            if ! build_deps; then
+                echo -e "${RED}!! Dependencies check failed. Aborting build process.${NC}"
+                return 1
+            fi
+
+            local script_dir
+            script_dir=$(dirname "$(get_script_path)")
+
+            if [[ -f "$script_dir/src_builder" ]]; then
+                # Serialize selected_dirs array into a string
+                local selected_dirs_string
+                selected_dirs_string=$(printf '%s|' "${selected_dirs[@]}")
+                selected_dirs_string=${selected_dirs_string%|}  # Remove trailing pipe
+
+                # Pass serialized string as an environment variable
+                UPDATED_DIRS="$selected_dirs_string" bash "$script_dir/src_builder"
+            else
+                echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
+                exit 2
+            fi
+            break
         else
-            echo -e "${RED}Invalid input. Please respond with 'yes' or 'no'.${NC}"
+            echo -e "${RED}Invalid input. Please respond with 'yes', 'no', or 'select'.${NC}"
         fi
     done
 }
@@ -362,7 +412,7 @@ run_src_builder() {
 # Alchemist Den
 main() {
     parser "$@"
-    show_ascii_header
+    show_header
     greet_user
     confirm_action
     deps
