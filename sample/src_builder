@@ -1,0 +1,882 @@
+#!/usr/bin/env zsh
+
+SCRIPT_VERSION="1.2.6"
+SCRIPT_NAME=$(basename "$0")
+# Qnk6IE1hZGUyRmxleA==
+
+show_version() {
+    echo -e "${GREEN}Version $SCRIPT_VERSION${NC}"
+    exit 0
+}
+
+version_check() {
+
+    if [[ $# -gt 0 ]]; then
+        if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+            show_version
+        fi
+    fi
+}
+
+# Function to display help information
+show_help() {
+    echo -e "${LIGHT_BLUE}Usage:${NC} ${GREEN}$0${NC} ${BLUE}[OPTIONS]${NC}"
+    echo
+    echo -e "${MAGENTA}This script is a helper script for stash_n_pull.sh and as such, stash_n_pull.sh${NC} ${RED}MUST${NC} ${MAGENTA}be run first.${NC}"
+    echo
+    echo -e "${LIGHT_BLUE}Options:${NC}"
+    echo "  -h, --help     Display this help message and exit"
+    echo
+    echo -e "${LIGHT_BLUE}This script will:${NC}"
+    echo -e "${GREEN}. Build the updated Repositories parsed by stash_n_pull.sh.${NC}"
+
+    echo
+    echo -e "Note: This script comes as is, with ${YELLOW}NO GUARANTEE!${NC}"
+    exit 0
+}
+
+# Function to parse command line arguments
+parser() {
+
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            -h|--help)
+                show_help
+                ;;
+            *)
+                echo -e "${RED}Error: This script does not accept arguments${NC}"
+                echo -e "${YELLOW}It is called automatically by stash_n_pull.sh${NC}"
+                show_help
+                exit 1
+                ;;
+        esac
+    fi
+}
+
+set -uo pipefail
+set -o physical # Resolve symlinks when changing directory
+# -e: exit on error
+# -u: treat unset variables as an error
+# -o pipefail: # Will return the exit status if shit fails
+
+# Color definitions
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+RED='\033[1;31m'
+BLUE='\033[0;34m'
+LIGHT_BLUE='\033[1;36m'
+MAGENTA='\033[1;35m'
+NC='\033[0m' # No color
+
+# Resolve path
+get_path() {
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_path="${script_dir}/$(basename "${BASH_SOURCE[0]}")"
+    echo "$script_path"
+}
+
+SCRIPT_PATH=$(get_path)
+LOG_FILE="${SCRIPT_PATH%.*}_$(date +%Y%m%d_%I%M%S%p).log"
+# uncomment the two lines bellow
+# to enable global logging
+#exec 3>&1 4>&2
+#exec > >(tee -a "$LOG_FILE") 2>&1
+
+# Logging function
+log() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date +"%Y-%m-%d %I:%M:%S %p")
+
+    # Strip color codes and special characters
+    local clean_message=$(echo -n "$message" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" | tr -cd '\11\12\15\40-\176')
+
+    # Log the clean message
+    #touch "$LOG_FILE"
+    echo "[$timestamp] [$level] $clean_message" >> "$LOG_FILE"
+}
+
+# log cleaning function
+log_cleaner() {
+    local log_dir=$(dirname "$LOG_FILE")
+    local log_base=$(basename "$LOG_FILE" | cut -d'_' -f1)
+
+    # Find all matching log files sorted by modification time (newest first)
+    local all_logs=($(find "$log_dir" -maxdepth 1 -name "${log_base}_*.log" -type f -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2))
+
+    local current_log="$LOG_FILE"
+
+    # Remove all logs except the current one
+    for log in "${all_logs[@]}"; do
+        if [[ "$log" != "$current_log" ]]; then
+            rm -f "$log"
+            echo "[$(date +"%Y-%m-%d %I:%M:%S %p")] [INFO] Removed old log file: $log" >> "$current_log"
+        fi
+    done
+}
+
+log_cleaner
+
+cleanup() {
+    log "INFO" "Starting cleanup process.."
+
+    restore_cpu_governor
+
+    # stop sudo keeper process if its running
+    if [[ -n "$SUDO_KEEPER_PID" ]]; then
+        if ps -p $SUDO_KEEPER_PID > /dev/null; then
+            log "INFO" "Stopping sudo keeper process (PID: $SUDO_KEEPER_PID)"
+            if kill "$SUDO_KEEPER_PID" 2>/dev/null; then
+                log "INFO" "Successfully stopped sudo keeper process"
+            else
+                log "ERROR" "Failed to stop sudo keeper process (exit code: $?)"
+                echo -e "${YELLOW}Warning: Failed to stop sudo keeper process.${NC}"
+            fi
+        else
+            log "WARNING" "Sudo keeper process (PID: $SUDO_KEEPER_PID) was not running"
+        fi
+    else
+        log "WARNING" "SUDO_KEEPER_PID was not set"
+    fi
+
+    # clear cached password
+    set +u
+    unset SUDO_PASSWORD
+    set -u
+    log "INFO" "Cleared cached sudo password"
+
+    log_cleaner
+    log "INFO" "Cleanup completed"
+}
+
+monitor_cpu_temperature() {
+    local max_safe_temp=${1:-97}  # Change default (97°C)
+    local temp_file="/sys/class/thermal/thermal_zone0/temp"
+
+    # Check if temperature file exists
+    if [[ ! -f "$temp_file" ]]; then
+        log "WARNING" "CPU temperature monitoring file not found at $temp_file"
+        echo -e "${YELLOW}!! Unable to monitor CPU temperature. Temperature file not found.${NC}"
+        return 1
+    fi
+
+    # convert temp
+    local temp=$(($(cat "$temp_file") / 1000))
+
+    # Log temperature
+    if [[ $temp -gt $max_safe_temp ]]; then
+        log "CRITICAL" "CPU temperature exceeded safe threshold: ${temp}°C"
+        echo -e "${RED}!! CRITICAL: CPU temperature is ${temp}°C, Safe limit is ${max_safe_temp}°C${NC}"
+
+        # Attempt to restore original state
+        restore_cpu_governor
+
+        # Must be after we recheck temps
+        # Additional options
+        #echo -e "${YELLOW}==>> Attempting emergency cooling measures...${NC}"
+
+        # Throttle CPU if possible
+        #if command -v cpufreq-set &> /dev/null; then
+        #    cpufreq-set -f 2800MHz
+        #    log "INFO" "Throttled CPU frequency to 2800MHz as emergency cooling measure"
+        #fi
+
+        # stop build process?
+        #return 1
+    else
+        # Log temperatures
+        if [[ $temp -gt 87 ]]; then
+            log "WARNING" "High CPU temperature detected: ${temp}°C"
+            echo -e "${YELLOW}!! High CPU temperature: ${temp}°C.${NC}"
+        fi
+        return 0
+    fi
+}
+
+current_temp() {
+
+    if [[ -f /sys/class/thermal/thermal_zone0/temp ]]; then
+        local temp=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
+        log "INFO" "Current System temperature: $temp°C"
+        echo -e "${YELLOW}==>> Current System Temperature:${NC} ($temp°C)."
+    fi
+
+}
+
+# resource check function
+check_system_resources() {
+    local min_mem=2000  # 2GB in MB
+    local min_disk=5000 # 5GB in MB
+    local min_cpus=2
+
+    # Check available memory
+    local total_mem=$(free -m | awk '/^Mem:/{print $2}')
+    echo -e "${YELLOW}~=>> Total Memory:${NC} $total_mem MB"
+    if [[ $total_mem -lt $min_mem ]]; then
+        echo -e "${YELLOW}WARNING !! Low total memory: $total_mem MB available (minimum $min_mem MB recommended).${NC}"
+        log "WARNING" "Low total memory: $total_mem MB available (minimum $min_mem MB recommended)"
+    fi
+
+    # Check disk space
+    local free_disk=$(df -m . | awk 'NR==2{print $4}')
+    echo -e "${YELLOW}~=>> Free Disk Space:${NC} $free_disk MB"
+    if [[ $free_disk -lt $min_disk ]]; then
+        echo -e "${YELLOW}WARNING !! Low disk space: $free_disk MB available (minimum $min_disk MB recommended).${NC}"
+        log "WARNING" "Low disk space: $free_disk MB available (minimum $min_disk MB recommended)"
+    fi
+
+    # Check CPU cores
+    local cpu_count=$(nproc)
+    echo -e "${YELLOW}~=>> CPU Cores:${NC} $cpu_count"
+    if [[ $cpu_count -lt $min_cpus ]]; then
+        echo -e "${YELLOW}WARNING !! Only $cpu_count CPU cores available (minimum $min_cpus recommended).${NC}"
+        log "WARNING" "Only $cpu_count CPU cores available (minimum $min_cpus recommended)"
+    fi
+
+    # temperature check
+    current_temp
+    monitor_cpu_temperature 97
+}
+
+# Function to cache the sudo password for the current session
+cache_sudo_password() {
+    local attempts=0
+    local max_attempts=3
+
+    while [[ $attempts -lt $max_attempts ]]; do
+        echo -e "${YELLOW}==>> Optimazing CPU governor for speedy builds..${NC}"
+        echo -ne "${LIGHT_BLUE}Please, enter your sudo password: ${NC}"
+        if ! read -s -t 60 SUDO_PASSWORD; then
+            log "ERROR" "Password input timed out after 60 seconds"
+            echo -e "\n${RED}Error: Password input timed out after 60 seconds.${NC}"
+            exit 1
+        fi
+        echo
+
+        # Verify the password
+        if echo "$SUDO_PASSWORD" | sudo -S -v 2>/dev/null; then
+            export SUDO_PASSWORD
+            return 0
+        else
+            attempts=$((attempts + 1))
+            if [[ $attempts -lt $max_attempts ]]; then
+                log "WARNING" "Incorrect password"
+                echo -e "${RED}Incorrect password. Please try again.${NC}"
+            fi
+        fi
+    done
+
+    echo -e "${RED}Maximum password attempts reached. Exiting.${NC}"
+    long "ERROR" "Maximum password attempts reached"
+    exit 1
+}
+
+# Function to keep sudo alive during script execution
+keep_sudo_alive() {
+    log "INFO" "Running keep_sudo_alive() (PID: $$)"
+
+    while true; do
+        if [[ -z "$SUDO_PASSWORD" ]]; then
+            log "ERROR" "SUDO_PASSWORD is not set in keep_sudo_alive()"
+            echo -e "${RED}!! SUDO_PASSWORD is not set in keep_sudo_alive().${NC}" >&2
+            return 1
+        fi
+        if ! echo "$SUDO_PASSWORD" | sudo -S -v; then
+            log "ERROR" "Failed to refresh sudo (exit code: $?)"
+            echo -e "${RED}!! Failed to refresh sudo.${NC}" >&2
+            return 1
+        fi
+       # log "DEBUG" "Successfully refreshed sudo"
+        sleep 60
+    done
+}
+
+# Function to use the cached sudo password
+sudo_cached() {
+
+    set +u
+    if [[ -z "$SUDO_PASSWORD" ]]; then
+        log "ERROR" "SUDO_PASSWORD is not set"
+        echo "[ERROR] SUDO_PASSWORD is not set." >&2
+        set -u
+        return 1
+    else
+        echo "$SUDO_PASSWORD" | sudo -S bash -c "$*"
+        local result=$?
+        set -u
+        return $result
+    fi
+}
+
+# Function to temporarily set the CPU governor
+set_cpu_governor() {
+    local supported_governors
+    local selected_governor
+    local current_governor
+    local ac_or_battery
+
+    # Check available governors
+    if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors ]]; then
+        supported_governors=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors)
+    else
+        echo -e "${RED}!! CPU frequency governors not supported or unavailable on this system.${NC}"
+        return 1
+    fi
+
+    # Capture the current governor state
+    if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]]; then
+        current_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
+        log "INFO" "Current governor: ${current_governor}"
+        echo -e "${BLUE}==>> Current governor: ${MAGENTA}${current_governor}${BLUE}${NC}"
+    else
+        echo -e "${RED}!! Unable to read current governor state.${NC}"
+        return 1
+    fi
+
+    # Check if we're on AC or battery power
+    if [[ -d /sys/class/power_supply/ ]]; then
+        for power_supply in /sys/class/power_supply/*; do
+            if [[ -f "$power_supply/type" && $(cat "$power_supply/type") == "Battery" ]]; then
+                if [[ -f "$power_supply/status" ]]; then
+                    ac_or_battery=$(cat "$power_supply/status")
+                    break
+                fi
+            fi
+        done
+    fi
+
+    monitor_cpu_temperature
+    # check CPU temperature
+#     if [[ -f /sys/class/thermal/thermal_zone0/temp ]]; then
+#         local temp=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
+#         log "INFO" "Current System temperature: $temp°C"
+#         if [[ $temp -gt 87 ]]; then
+#             log "WARNING" "CPU temperature is high ($temp°C)"
+#             echo -e "${RED}!! CPU temperature is high ($temp°C). Not changing governor.${NC}"
+#             return 1
+#         fi
+#     fi
+
+    # Determine the governor to set based on power status
+    if [[ "${ac_or_battery:-}" == "Discharging" ]]; then
+        echo -e "${YELLOW}  -> On Battery and discharing detected..${NC} "
+        # On battery - prefer ondemand
+        if echo "$supported_governors" | grep -qw "ondemand"; then
+            selected_governor="ondemand"
+            echo -e "${BLUE}  >> Selecting 'ondemand' governor for battery power.${NC}"
+        elif echo "$supported_governors" | grep -qw "powersave"; then
+            selected_governor="powersave"
+            echo -e "${BLUE}  >> '${MAGENTA}ondemand${BLUE}' not available, selecting '${MAGENTA}powersave${BLUE}' governor for battery power.${NC}"
+        else
+            selected_governor="$current_governor"
+            echo -e "${YELLOW}  >> Neither '${MAGENTA}ondemand${YELLOW}' nor '${MAGENTA}powersave${YELLOW}' available. Keeping current governor '${GREEN}${selected_governor}${YELLOW}' for battery power.${NC}"
+        fi
+    else
+        # On AC power - prefer performance
+        if echo "$supported_governors" | grep -qw "performance"; then
+            selected_governor="performance"
+        elif echo "$supported_governors" | grep -qw "ondemand"; then
+            echo -e "${BLUE}  >> Defaulting to '${GREEN}ondemand${BLUE}' as '${MAGENTA}performance${BLUE}' is not availavble.${NC}"
+            selected_governor="ondemand"
+        else
+            selected_governor="$current_governor"
+        fi
+    fi
+
+    # Check if we need to change the governor in the first place
+    if [[ "$current_governor" == "$selected_governor" ]]; then
+        echo -e "${BLUE}  >> CPU governor already set to a desirable state: '${GREEN}${selected_governor}${BLUE}'. No change needed.${NC}"
+        export CURRENT_GOVERNOR="$current_governor"
+        return 0
+    fi
+
+    # Set the governor
+    echo -e "${YELLOW}==>> Setting CPU governor to '${selected_governor}'...${NC}"
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        sudo_cached "echo '$selected_governor' > $cpu_dir/cpufreq/scaling_governor" || {
+            echo -e "${RED}!! Failed to set governor for ${cpu_dir}.${NC}"
+            return 1
+        }
+    done
+
+    log "INFO" "CPU governor set to '${selected_governor}'"
+    echo -e "${GREEN}  => CPU governor set to '${selected_governor}'.${NC}"
+
+    # Export the current governor variable
+    export CURRENT_GOVERNOR="$current_governor"
+    return 0
+}
+
+# Function to restore the original governor
+restore_cpu_governor() {
+
+    if [[ -z "$CURRENT_GOVERNOR" ]]; then
+        log "ERROR" "No previous governor state stored. Cannot restore"
+        echo -e "${RED}!! No previous governor state stored. Cannot restore.${NC}"
+        return 1
+    fi
+
+    # Check if SUDO_PASSWORD is set
+    if [[ -z "$SUDO_PASSWORD" ]]; then
+        log "ERROR" "SUDO_PASSWORD is not set. Cannot restore CPU governor."
+        echo -e "${RED}!! SUDO_PASSWORD is not set. Cannot restore CPU governor.${NC}"
+        return 1
+    fi
+
+    # Get current governor to check if it needs restoration
+    local current_governor
+    if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]]; then
+        current_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
+    else
+        log "ERROR" "Cannot read current governor state"
+        echo -e "${RED}!! Unable to read current governor state.${NC}"
+        return 1
+    fi
+
+    # Only restore if the governor was actually changed
+    if [[ "$current_governor" == "$CURRENT_GOVERNOR" ]]; then
+        echo -e "${BLUE}==>> CPU governor is at original state: '${MAGENTA}${CURRENT_GOVERNOR}${BLUE}'. No restoration needed.${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}==>> Restoring CPU governor..${NC}"
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        sudo_cached "echo '$CURRENT_GOVERNOR' > $cpu_dir/cpufreq/scaling_governor" || {
+            log "ERROR" "Failed to restore governor for ${cpu_dir}"
+            echo -e "${RED}!! Failed to restore governor for ${cpu_dir}.${NC}"
+            return 1
+        }
+    done
+
+    log "INFO" "CPU governor restored to: ${CURRENT_GOVERNOR}"
+    echo -e "${YELLOW}==>> CPU governor restored to '${GREEN}${CURRENT_GOVERNOR}${YELLOW}'.${NC}"
+    return 0
+}
+
+alive_reversing()
+{
+    log "INFO" "Starting alive_reversing build..".
+    echo -e "${YELLOW}==>> Starting alive_reversing build..${NC}"
+    cd ~/src/alive_reversing
+    mkdir -pv build
+    cd build
+    cmake -S .. -B .
+    make -j$(nproc) 2>> "$LOG_FILE" || { log "ERROR" "make command failed"; return 1; }
+    log "INFO" "make command completed successfully"
+    cd Source/relive/
+    echo -e "${YELLOW} =>> Copying executable.${NC}"
+    cp -Rfv relive ~/"games/Oddworld - Abe's Exoddus"
+    cp -Rfv relive ~/"games/Oddworld - Abe's Oddysee"
+    cd ../../../
+    echo -e "${YELLOW} =>> Copying assets..${NC}"
+    cp -Rf assets ~/"games/Oddworld - Abe's Exoddus"
+    cp -Rf assets ~/"games/Oddworld - Abe's Oddysee"
+    echo -e "${YELLOW} =>> Removing build directory..${NC}"
+    rm -rf build
+    echo -e "${GREEN}==>> ✓Done building alive_reversing.${NC}"
+    log "INFO" "Done building alive_reversing."
+}
+
+daedalOS()
+{
+    log "INFO" "==>> Starting DeadalOS build..."
+    echo -e "${YELLOW}==>> Starting daedalOS build..${NC}"
+    cd ~/src/daedalOS
+    echo -e "${YELLOW} =>> Checking if Docker is running...${NC}"
+    if ! systemctl is-active --quiet docker; then
+        echo -e "${RED} =>> Docker is not running. Attempting to start it...${NC}"
+        if sudo systemctl start docker; then
+            echo -e "${GREEN} =>> Docker started ✓successfully.${NC}"
+        else
+            echo -e "${RED} =>> Failed to start Docker. Exiting.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${LIGHT_BLUE} =>> Docker is already running.${NC}"
+    fi
+
+    sudo docker build -t daedalos . || { log "ERROR" "Configuration failed for daedalos"; return 1; }
+
+    echo -e "${YELLOW} =>> Stopping Docker service...${NC}"
+    if sudo systemctl stop docker; then
+        echo -e "${GREEN} =>> Docker service stopped ✓successfully.${NC}"
+    else
+        echo -e "${RED} =>> Failed to stop Docker service. Exiting.${NC}"
+        exit 1
+    fi
+
+    # Stop the docker.socket service
+    echo -e "${YELLOW} =>> Stopping triggering unit..."
+    if sudo systemctl stop docker.socket; then
+        echo -e "${GREEN} =>> Docker socket stopped ✓successfully.${NC}"
+    else
+        echo -e "${RED} =>> Failed to stop Docker socket. Exiting.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}==>> ✓Done building daedalOS.${NC}"
+    log "INFO" "Done building deadalOS."
+}
+
+devilutionX()
+{
+    log "INFO" "Starting devilutionX build..."
+    echo -e "${YELLOW}==>> Starting devilutionX build..${NC}"
+    cd ~/src/devilutionX || { log "ERROR" "Failed to change directory to ~/src/devilutionX"; return 1; }
+
+    cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release -Wno-dev || { log "ERROR" "CMake configuration failed for devilutionX"; return 1; }
+    cmake --build build -j $(getconf _NPROCESSORS_ONLN) || { log "ERROR" "CMake build failed for devilutionX"; return 1; }
+
+    cd build || { log "ERROR" "Failed to change directory to build"; return 1; }
+
+    if [ -f ~/games/devilutionX/devilutionx.bk ]; then
+        echo -e "${YELLOW} =>> Removing the old backup..${NC}"
+        rm -rfv ~/games/devilutionX/devilutionx.bk
+    else
+        echo -e "${YELLOW}==>> No Backups found.. ${NC}"
+    fi
+
+    echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
+    mv -fv ~/games/devilutionX/devilutionx ~/games/devilutionX/devilutionx.bk
+    echo -e "${YELLOW} =>> Copying executable.${NC}"
+    cp -Rfv devilutionx ~/games/devilutionX/
+    echo -e "${YELLOW} =>> Copying assets to games.${NC}"
+    cp -Rf assets ~/games/devilutionX/
+
+    cd .. || { log "ERROR" "Failed to change directory to parent"; return 1; }
+    echo -e "${YELLOW} =>> Removing build directory..${NC}"
+    rm -rf build
+
+    echo -e "${GREEN}==>> ✓Done building devilutionX.${NC}"
+    log "INFO" "Done building devilutionX."
+}
+
+eduke32()
+{
+    log "INFO" "==>> Starting eduke32 build..."
+    echo -e "${YELLOW}==>> Starting eduke32 build..${NC}"
+    cd ~/src/eduke32 || { log "ERROR" "Failed to change directory to ~/src/eduke32"; return 1; }
+    if ! make RELEASE=1 OPTLEVEL=2 -j$(nproc); then
+        log "ERROR" "Build command failed."
+        echo -e "${RED}!! Build command failed. Check the log file for details: $LOG_FILE${NC}"
+        exit 0
+    else
+        log "INFO" "Built eduke32 successfully."
+    fi
+    echo -e "${YELLOW} =>> Copying executables.${NC}"
+    cp -rfv eduke32 ~/games/duke3d
+    cp -rfv mapster32 ~/games/duke3d
+    echo -e "${YELLOW}==>> Cleaning tree..${NC}"
+    make clean
+    echo -e "${GREEN}==>> ✓Done building eduke32.${NC}"
+    log "INFO" "==>> Done building eduke32."
+}
+
+extract_xiso()
+{
+    log "INFO" "==>> Starting extract_xiso build..."
+    echo -e "${YELLOW}==>> Starting extract_xiso build..${NC}"
+    cd ~/src/extract_xiso
+    mkdir -p build
+    cd build
+    echo -e "${YELLOW} =>> Configuring build..${NC}"
+    cmake ..
+    echo -e "${YELLOW}  => Now building..${NC}"
+    make
+    echo -e "${GREEN}==>> ✓Done building extract_xiso.${NC}"
+    echo -e "${BLUE}  >> find it in ~/src/extract_xiso/build..${NC}"
+    log "INFO" "==>> Done building extract_xiso."
+}
+
+fallout2_ce()
+{
+    log "INFO" "==>> Starting fallout2_ce build..."
+    echo -e "${YELLOW}==>> Starting fallout2_ce build..${NC}"
+    cd ~/src/fallout2_ce
+    cmake -B build -Wno-dev
+    cmake --build build --config release -j$(nproc)
+    cd build
+    echo -e "${YELLOW} =>> Copying executable.${NC}"
+    cp -Rfv fallout2-ce ~/games/fallout2
+    cd ..
+    echo -e "${YELLOW} =>> Removing build directory..${NC}"
+    rm -rf build
+    echo -e "${GREEN}==>> ✓Done building fallout2_ce.${NC}"
+    log "INFO" "==>> Done building fallout2_ce."
+}
+
+Shipwright()
+{
+    log "INFO" "==>> Starting Shipwright build..."
+    echo -e "${YELLOW}==>> Starting Shipwright build..${NC}"
+    cd ~/src/Shipwright
+    cmake -H. -Bbuild -DCMAKE_BUILD_TYPE:STRING=Release -GNinja -Wno-dev
+    cmake --build build --target GenerateSohOtr
+    cmake --build build --config Release -j$(nproc)
+    echo -e "${YELLOW} =>> Copying executables.${NC}"
+    cp -Rfv build/soh/soh.elf ~/games/ocarina64
+    cp -Rfv build/soh/soh.otr ~/games/ocarina64
+    echo -e "${YELLOW} =>> Copying assets..${NC}"
+    cp -rf build/soh/assets ~/games/ocarina64
+    echo -e "${GREEN}==>> ✓Done building Shipwright.${NC}"
+    log "INFO" "==>> Done building Shipwright"
+}
+
+SDLPoP()
+{
+    log "INFO" "==>> Starting SDLPoP build..."
+    echo -e "${YELLOW}==>> Starting SDLPoP build..${NC}"
+    cd ~/src/SDLPoP/src
+    make all -j$(nproc)
+    echo -e "${YELLOW} =>> Copying executable.${NC}"
+    cp -rfv ~/src/SDLPoP/prince ~/games/prince-of-persia
+    echo -e "${YELLOW} =>> Copying assets to games.${NC}"
+    cp -Rf ~/src/SDLPoP/data ~/games/prince-of-persia
+    make clean
+    echo -e "${GREEN}==>> ✓Done building SDLPoP.${NC}"
+    log "INFO" "==>> Done building SDLPoP."
+}
+
+Sonic_CD()
+{
+    log "INFO" "==>> Starting Sonic_CD build..."
+    echo -e "${YELLOW}==>> Starting Sonic-CD build..${NC}"
+    cd ~/src/Sonic_CD
+    cmake -B build -Wno-dev
+    cmake --build build --config release
+    echo -e "${YELLOW} =>> Checking for existing backups..${NC}"
+
+    if [ -f ~/games/sonic-cd/RSDKv3.bk ]; then
+        echo -e "${YELLOW} =>> Removing the old backup..${NC}"
+        rm -rfv ~/games/sonic-cd/RSDKv3.bk
+    else
+        echo -e "${YELLOW} =>> No backups found..${NC}"
+    fi
+
+    echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
+    mv -fv ~/games/sonic-cd/RSDKv3 ~/games/sonic-cd/RSDKv3.bk
+    echo -e "${YELLOW} =>> Copying executable.${NC}"
+    cp -rfv build/RSDKv3 ~/games/sonic-cd
+    echo -e "${YELLOW} =>> Removing build directory..${NC}"
+    rm -rf build
+    echo -e "${GREEN}==>> ✓Done building Sonic-CD.${NC}"
+    log "INFO" "==>> Done building Sonic_CD."
+}
+
+retroarch()
+{
+    log "INFO" "==>> Starting RetroArch build..."
+    echo -e "${YELLOW}==>> Starting RetroArch build...${NC}"
+    cd ~/src/retroarch || { echo "Failed to change directory to ~/src/retroarch"; return 1; }
+
+    # Check if the system is a RPi4
+    IS_RPI4=$(grep -q "Raspberry Pi 4" /proc/device-tree/model 2>/dev/null && echo "yes" || echo "no")
+
+    if [[ $IS_RPI4 == "yes" ]]; then
+        echo -e "${YELLOW} =>> Detected Raspberry Pi 4. Using RPi4-specific configuration...${NC}"
+        ./configure --disable-videocore --disable-opengl1 --enable-opengles --enable-opengles3 \
+                    --enable-opengles3_1 --enable-vulkan --enable-kms --enable-egl --enable-pulse
+    else
+        echo -e "${YELLOW} =>> Using default configuration..${NC}"
+        ./configure || { log "ERROR" "failed to configure the build"; return 1; }
+    fi
+
+    make clean
+    make -j$(nproc)
+
+    if [ -f ~/games/retroarch/retroarch.bk ]; then
+        echo -e "${YELLOW} =>> Removing the old backup..${NC}"
+        rm -rfv ~/games/retroarch/retroarch.bk
+    else
+        echo -e "${YELLOW} =>> No backups found..${NC}"
+    fi
+
+    echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
+    mv -fv ~/games/retroarch/retroarch ~/games/retroarch/retroarch.bk
+    echo -e "${YELLOW} =>> Copying executable..${NC}"
+    cp -Rfv retroarch ~/games/retroarch
+	echo -e "${YELLOW} =>> Cleaning Build tree...${NC}"
+    make clean
+	cd .. &>/dev/null || { echo "Failed to leave the current directory"; return 1; }
+    echo -e "${GREEN}==>> ✓Done building RetroArch.${NC}"
+    log "INFO" "==>> Done building RetroArch."
+}
+
+xemu()
+{
+    log "INFO" "==>> Starting xemu build..."
+    echo -e "${YELLOW}==>> Starting Xemu build..${NC}"
+    cd ~/src/xemu
+    CFLAGS="-march=native" CXXFLAGS="-march=native" ./build.sh
+    echo -e "${YELLOW} =>> Copying executable.${NC}"
+    cp -rfv dist/xemu ~/games/xemu
+    echo -e "${YELLOW} =>> Removing build directory..${NC}"
+    rm -Rf build
+    echo -e "${GREEN}==>> ✓Done building Xemu.${NC}"
+    log "INFO" "==>> Done building xemu."
+
+}
+
+# Call it before the conditions bellow
+version_check "$@"
+
+# Function to check and validate UPDATED_DIRS
+check_updated_dirs() {
+
+    if [[ -z "${UPDATED_DIRS+x}" ]]; then
+        log "ERROR" "==>> UPDATED_DIRS environment variable is not set."
+        echo -e "${RED}Error: UPDATED_DIRS environment variable is not set.${NC}"
+        echo -e "${YELLOW}Did you run stash_n_pull.sh first ? ${NC}"
+        echo -e "${YELLOW}This ensures that 'run_src_builder()' in stash_n_pull.sh passes the data correctly.${NC}"
+        restore_cpu_governor
+        cleanup
+        return 1
+    elif [[ -z "$UPDATED_DIRS" ]]; then
+        log "ERROR" "==>> UPDATED_DIRS environment variable is set, but is empty."
+        echo -e "${RED}Error: UPDATED_DIRS environment variable is set, but is empty.${NC}"
+        echo -e "${YELLOW}No directories were provided for building. Check stash_n_pull.sh .${NC}"
+        restore_cpu_governor
+        cleanup
+        return 1
+    fi
+
+    IFS='|' read -r -a updated_dirs <<< "$UPDATED_DIRS"
+
+    if [[ ${#updated_dirs[@]} -eq 0 ]]; then
+        log "ERROR" "==>> UPDATED_DIRS is set, but no valid directories"
+        echo -e "${RED}Error: UPDATED_DIRS is set, but no valid directories were extracted.${NC}"
+        echo -e "${YELLOW}Check the format of the UPDATED_DIRS variable. Expected format: 'dir1|dir2|dir3'${NC}"
+        restore_cpu_governor
+        cleanup
+        return 1
+    fi
+
+    return 0
+}
+
+repos() {
+
+    local repo="$1"
+    case "$repo" in
+        "alive_reversing")
+            alive_reversing
+            ;;
+        "daedalOS")
+            daedalOS
+            ;;
+        "devilutionX")
+            devilutionX
+            ;;
+        "eduke32")
+            eduke32
+            ;;
+        "extract_xiso")
+            extract_xiso
+            ;;
+        "fallout2_ce")
+            fallout2_ce
+            ;;
+        "SDLPoP")
+            SDLPoP
+            ;;
+        "Sonic_CD")
+            Sonic_CD
+            ;;
+        "Shipwright")
+            Shipwright
+            ;;
+        "retroarch")
+            retroarch
+            ;;
+        "xemu")
+            xemu
+            ;;
+        *)
+            echo -e "${BLUE}  >> No build function defined for $repo. Skipping..${NC}"
+            ;;
+    esac
+}
+
+build_updated_repos() {
+
+    # Validate updated directories
+    if ! check_updated_dirs; then
+        return 1
+    fi
+
+    # Process repositories
+    for repo in "${updated_dirs[@]}"; do
+        # Build once
+        if ! repos "$repo"; then
+            echo -e "${RED}==> Failed to build repository:${NC} $repo"
+            log "ERROR" "Failed to build repository: $repo"
+            continue
+        fi
+
+        # Monitor CPU temperature after the build
+        if ! monitor_cpu_temperature 97; then
+            local current_temp=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
+            
+            # Attempt to restore CPU governor
+            echo -e "${RED}!! High CPU temperature detected: ${current_temp}°C${NC}"
+            echo -e "${YELLOW}==> Attempting to restore CPU governor...${NC}"
+            log "WARNING" "Restored CPU governor due to high CPU temperatures (${current_temp}°C)"
+            restore_cpu_governor
+
+            # Prompt user
+            local response=""
+            echo -ne "${YELLOW}Do you want to continue building? [y/N] (30s timeout): ${NC}"
+            for i in {30..1}; do
+                echo -ne "\r${YELLOW}Time remaining: ${i}s ${NC}"
+                if read -r -t 1 response; then
+                    break
+                fi
+            done
+            echo
+
+            # User response
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                echo -e "${GREEN}==> Continuing builds..${NC}"
+                log "WARNING" "User chose to continue build despite high CPU temperature (${current_temp}°C)"
+            else
+                echo -e "${RED}Build process stopped due to high CPU temperature.${NC} (${current_temp}°C)"
+                log "INFO" "Build stopped by user due to high CPU temperature (${current_temp}°C)"
+                break
+            fi
+        fi
+    done
+}
+
+main() {
+
+    parser "$@"
+    if ! check_system_resources; then
+        echo -e "${RED}!! System resources check failed. Aborting build process.${NC}"
+        cleanup
+        exit 1
+    fi
+    cache_sudo_password
+
+    log "INFO" "Starting sudo keep-alive background process (Parent PID: $$)"
+    keep_sudo_alive &
+    SUDO_KEEPER_PID=$!
+
+    # check background process
+    if ! ps -p $SUDO_KEEPER_PID > /dev/null; then
+        log "ERROR" "Failed to start sudo keeper process"
+        echo -e "${RED}!! Failed to start sudo keeper process. Continuing without background sudo refresh.${NC}"
+        unset SUDO_KEEPER_PID
+    else
+        log "INFO" "Sudo keeper process started successfully (Child PID: $SUDO_KEEPER_PID)"
+    fi
+
+    # cleanup
+    trap 'cleanup' EXIT INT TERM
+
+    if set_cpu_governor; then
+        build_updated_repos
+        current_temp
+    fi
+    echo -e "${YELLOW}==>> All Done. Exiting..${NC}"
+}
+
+main "$@"
