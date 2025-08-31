@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail  # error handling
+set -euo pipefail
 # -e: exit on error
 # -u: treat unset variables as an error
 # -o: pipeline errors
@@ -8,7 +8,7 @@ set -euo pipefail  # error handling
 # Color definitions
 GREEN='\033[1;32m'
 DARK_GREEN='\033[0;32m'
-ORANGE='\033[1;33m'
+YELLOW='\033[1;33m'
 RED='\033[1;31m'
 BLUE='\033[0;34m'
 MAGENTA='\033[1;35m'
@@ -17,7 +17,7 @@ NC='\033[0m' # No color
 
 author() {
     local message="$1"
-    #local colors=("red" "orange" "cyan" "magenta" "dark green" "blue")
+    #local colors=("red" "yellow" "cyan" "magenta" "dark green" "blue")
     local colors=("\033[1;31m" "\033[1;33m" "\033[1;36m" "\033[1;35m" "\033[0;32m" "\033[0;34m")
     local NC="\033[0m"
     local delay=0.1
@@ -51,7 +51,7 @@ header() {
 EOF
 }
 
-# Function to get the path of the script
+# get the path of the script
 get_script_path() {
     readlink -f "$0"
 }
@@ -68,7 +68,7 @@ show_header() {
 # Function to greet the user
 greet_user() {
     local username=$(whoami)
-    echo -e "${ORANGE}Hello, $username ${NC}"
+    echo -e "${YELLOW}Hello, $username ${NC}"
 }
 
 # Function to display help information
@@ -85,7 +85,7 @@ show_help() {
     echo -e "${GREEN}  2. Pull in new changes recursively with modules${NC}"
     echo -e "${GREEN}  3. Offer to build updated Repositories${NC}"
     echo
-    echo -e "Note: This script comes as is, with ${ORANGE}NO GUARANTEE!${NC}"
+    echo -e "Note: This script comes as is, with ${YELLOW}NO GUARANTEE!${NC}"
     exit 0
 }
 
@@ -106,7 +106,7 @@ parser() {
     done
 }
 
-# Function to get deps
+# Function to get dependencies
 deps() {
     local required_deps=(bash git)
     local missing_deps=()
@@ -122,7 +122,7 @@ deps() {
         echo -e "${LIGHT_BLUE}Do you want to install them? (y/N): ${NC}"
         read -r confirm_install
         if [[ $confirm_install =~ ^[Yy]$ ]]; then
-            echo -e "${ORANGE}==>> Installing dependencies...${NC}"
+            echo -e "${YELLOW}==>> Installing dependencies...${NC}"
             if command -v apt &> /dev/null; then
                 sudo apt update && sudo apt install -y "${missing_deps[@]}"
             elif command -v pacman &> /dev/null; then
@@ -130,7 +130,7 @@ deps() {
             else
                 echo -e "${RED}==>> No suitable package manager found.${NC}"
                 sleep 1
-                echo -e "${ORANGE}==>> Please install dependencies manually.${NC}"
+                echo -e "${YELLOW}==>> Please install dependencies manually.${NC}"
             fi
         else
             echo -e "${RED}==>> Installation cancelled.${NC}"
@@ -167,7 +167,7 @@ is_it_private() {
 
     # Check if we got a valid URL
     if [[ -z "$remote_url" ]]; then
-        echo -e "${ORANGE} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
+        echo -e "${YELLOW} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
         return 1
     fi
 
@@ -175,7 +175,7 @@ is_it_private() {
     if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
         return 0
     else
-        echo -e "${ORANGE} ->> Repository appears to be private: $(basename "$repo_dir")${NC}"
+        echo -e "${YELLOW} ->> Repository appears to be private: $(basename "$repo_dir")${NC}"
         
         # Ask user if they want to enter credentials
         printf "${LIGHT_BLUE}Would you like to enter credentials for this repo? (y/N): ${NC}"
@@ -219,7 +219,7 @@ stash_pull() {
         if [ -d "$dir" ]; then
             if [ -d "$dir/.git" ]; then
                 git_count=$((git_count + 1))
-                echo -e "${GREEN}==>> Processing repository: $(basename "$dir")${NC}"
+                echo -e "${YELLOW}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
 
                 # Check if repository is private and handle authentication
@@ -240,7 +240,7 @@ stash_pull() {
                     updated_dirs+=("$(basename "$dir")")
                     echo -e "${BLUE}==>> Repository updated successfully${NC}"
                 else
-                    echo -e "${ORANGE}  => Repository is up-to-date${NC}"
+                    echo -e "${GREEN}  => Repository is up-to-date${NC}"
                 fi
 
                 cd - > /dev/null || continue
@@ -263,7 +263,7 @@ stash_pull() {
             # Pass updated directories as arguments
             run_src_builder "${updated_dirs[@]}"
         else
-            echo -e "${ORANGE}==>> No repositories were updated.${NC}"
+            echo -e "${YELLOW}==>> No repositories were updated.${NC}"
         fi
     fi
 }
@@ -274,7 +274,7 @@ build_deps() {
     local required_deps=(make gcc cmake ninja)  # Core dependencies for building
     local missing_deps=()
 
-    echo -e "${ORANGE}==>> Checking build dependencies...${NC}"
+    echo -e "${YELLOW}==>> Checking build dependencies...${NC}"
     for dep in "${required_deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             missing_deps+=("$dep")
@@ -290,7 +290,7 @@ build_deps() {
         response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
 
         if [[ "$response" == "y" || "$response" == "yes" || -z "$answer" ]]; then
-            echo -e "${ORANGE} =>> Installing missing dependencies...${NC}"
+            echo -e "${YELLOW} =>> Installing missing dependencies...${NC}"
             if command -v apt &>/dev/null; then
                 sudo apt update && sudo apt install -y "${missing_deps[@]}"
             elif command -v pacman &>/dev/null; then
@@ -324,7 +324,7 @@ run_src_builder() {
         answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')  # Normalize input
 
         if [[ "$answer" == "yes" || "$answer" == "y" || -z "$answer" ]]; then
-            echo -e "${ORANGE}==>> Attempting to build all updated repositories...${NC}"
+            echo -e "${YELLOW}==>> Attempting to build all updated repositories...${NC}"
 
             # Check for build dependencies
             if ! build_deps; then
@@ -335,7 +335,7 @@ run_src_builder() {
             local script_dir
             script_dir=$(dirname "$(get_script_path)")
 
-            if [[ -f "$script_dir/src_builder" ]]; then
+            if [[ -f "$script_dir/src_builder.sh" ]]; then
                 # Serialize updated_dirs array into a string
                 #echo "Debug: Serializing updated_dirs array into a string: ${updated_dirs[@]}"
                 local updated_dirs_string
@@ -345,17 +345,17 @@ run_src_builder() {
 
 
                 # Pass serialized string as an environment variable
-                UPDATED_DIRS="$updated_dirs_string" bash "$script_dir/src_builder"
+                UPDATED_DIRS="$updated_dirs_string" bash "$script_dir/src_builder.sh"
             else
-                echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
+                echo -e "${RED}!! Build script not found! Please make sure it's in the same directory with the name:${NC} ${MAGENTA}src_builder.sh.${NC}"
                 exit 2
             fi
             break
         elif [[ "$answer" == "no" || "$answer" == "n" ]]; then
-            echo -e "${ORANGE}==>> Exiting...${NC}"
+            echo -e "${YELLOW}==>> Exiting...${NC}"
             exit 0
         elif [[ "$answer" == "select" || "$answer" == "s" ]]; then
-            echo -e "${ORANGE}==>> Please select the repositories you want to build:${NC}"
+            echo -e "${YELLOW}==>> Please select the repositories you want to build:${NC}"
             for i in "${!updated_dirs[@]}"; do
                 echo "$((i+1)). ${updated_dirs[$i]}"
             done
@@ -379,7 +379,7 @@ run_src_builder() {
                 exit 1
             fi
 
-            echo -e "${ORANGE}==>> Attempting to build selected repositories:${NC} ${LIGHT_BLUE}${selected_dirs[*]}${NC}"
+            echo -e "${YELLOW}==>> Attempting to build selected repositories:${NC} ${LIGHT_BLUE}${selected_dirs[*]}${NC}"
 
             # Check build dependencies
             if ! build_deps; then
@@ -390,16 +390,16 @@ run_src_builder() {
             local script_dir
             script_dir=$(dirname "$(get_script_path)")
 
-            if [[ -f "$script_dir/src_builder" ]]; then
+            if [[ -f "$script_dir/src_builder.sh" ]]; then
                 # Serialize selected_dirs array into a string
                 local selected_dirs_string
                 selected_dirs_string=$(printf '%s|' "${selected_dirs[@]}")
                 selected_dirs_string=${selected_dirs_string%|}  # Remove trailing pipe
 
                 # Pass serialized string as an environment variable
-                UPDATED_DIRS="$selected_dirs_string" bash "$script_dir/src_builder"
+                UPDATED_DIRS="$selected_dirs_string" bash "$script_dir/src_builder.sh"
             else
-                echo -e "${RED}!! Build script not found! Please make sure it's in the same directory.${NC}"
+                echo -e "${RED}!! Build script not found! Please make sure it's in the same directory with the name:${NC} ${MAGENTA}src_builder.sh.${NC}"
                 exit 2
             fi
             break

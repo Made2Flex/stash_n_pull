@@ -1,7 +1,6 @@
 #!/usr/bin/env zsh
 
 SCRIPT_VERSION="1.2.6"
-SCRIPT_NAME=$(basename "$0")
 # Qnk6IE1hZGUyRmxleA==
 
 show_version() {
@@ -35,9 +34,8 @@ show_help() {
     exit 0
 }
 
-# Function to parse command line arguments
+# parse command line arguments
 parser() {
-
     if [[ $# -gt 0 ]]; then
         case "$1" in
             -h|--help)
@@ -68,15 +66,10 @@ LIGHT_BLUE='\033[1;36m'
 MAGENTA='\033[1;35m'
 NC='\033[0m' # No color
 
-# Resolve path
-get_path() {
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local script_path="${script_dir}/$(basename "${BASH_SOURCE[0]}")"
-    echo "$script_path"
-}
 
-SCRIPT_PATH=$(get_path)
+SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
 LOG_FILE="${SCRIPT_PATH%.*}_$(date +%Y%m%d_%I%M%S%p).log"
+
 # uncomment the two lines bellow
 # to enable global logging
 #exec 3>&1 4>&2
@@ -101,7 +94,6 @@ log_cleaner() {
     local log_dir=$(dirname "$LOG_FILE")
     local log_base=$(basename "$LOG_FILE" | cut -d'_' -f1)
 
-    # Find all matching log files sorted by modification time (newest first)
     local all_logs=($(find "$log_dir" -maxdepth 1 -name "${log_base}_*.log" -type f -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2))
 
     local current_log="$LOG_FILE"
@@ -147,8 +139,12 @@ cleanup() {
 
     log_cleaner
     log "INFO" "Cleanup completed"
+    echo -e "${YELLOW}==>> Done. Now exiting..${NC}"
 }
 
+trap 'cleanup' EXIT INT TERM
+
+# function to check temp
 monitor_cpu_temperature() {
     local max_safe_temp=${1:-97}  # Change default (97°C)
     local temp_file="/sys/class/thermal/thermal_zone0/temp"
@@ -346,6 +342,8 @@ set_cpu_governor() {
     fi
 
     monitor_cpu_temperature
+
+    # Legacy function. to be removed in the future
     # check CPU temperature
 #     if [[ -f /sys/class/thermal/thermal_zone0/temp ]]; then
 #         local temp=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
@@ -505,7 +503,6 @@ daedalOS()
         exit 1
     fi
 
-    # Stop the docker.socket service
     echo -e "${YELLOW} =>> Stopping triggering unit..."
     if sudo systemctl stop docker.socket; then
         echo -e "${GREEN} =>> Docker socket stopped ✓successfully.${NC}"
@@ -519,9 +516,9 @@ daedalOS()
 
 devilutionX()
 {
-    log "INFO" "Starting devilutionX build..."
+    log "INFO" "Starting DevilutionX build..."
     echo -e "${YELLOW}==>> Starting devilutionX build..${NC}"
-    cd ~/src/devilutionX || { log "ERROR" "Failed to change directory to ~/src/devilutionX"; return 1; }
+    cd ~/src/DevilutionX || { log "ERROR" "Failed to change directory to ~/src/devilutionX"; return 1; }
 
     cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release -Wno-dev || { log "ERROR" "CMake configuration failed for devilutionX"; return 1; }
     cmake --build build -j $(getconf _NPROCESSORS_ONLN) || { log "ERROR" "CMake build failed for devilutionX"; return 1; }
@@ -535,8 +532,13 @@ devilutionX()
         echo -e "${YELLOW}==>> No Backups found.. ${NC}"
     fi
 
-    echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
-    mv -fv ~/games/devilutionX/devilutionx ~/games/devilutionX/devilutionx.bk
+    if [ -f ~/games/devilutionX/devilutionx ]; then
+        echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
+        mv -fv ~/games/devilutionX/devilutionx ~/games/devilutionX/devilutionx.bk
+    else
+        echo -e "${YELLOW}==>> Original executable not found, Nothing to backup${NC}"
+    fi
+
     echo -e "${YELLOW} =>> Copying executable.${NC}"
     cp -Rfv devilutionx ~/games/devilutionX/
     echo -e "${YELLOW} =>> Copying assets to games.${NC}"
@@ -555,13 +557,28 @@ eduke32()
     log "INFO" "==>> Starting eduke32 build..."
     echo -e "${YELLOW}==>> Starting eduke32 build..${NC}"
     cd ~/src/eduke32 || { log "ERROR" "Failed to change directory to ~/src/eduke32"; return 1; }
-    if ! make RELEASE=1 OPTLEVEL=2 -j$(nproc); then
+    if ! make RELEASE=1 OPTLEVEL=2 LTO=1 -j$(nproc); then
         log "ERROR" "Build command failed."
         echo -e "${RED}!! Build command failed. Check the log file for details: $LOG_FILE${NC}"
         exit 0
     else
         log "INFO" "Built eduke32 successfully."
     fi
+
+    if [ -f ~/games/duke3d/eduke32.bk ]; then
+        echo -e "${YELLOW} =>> Removing the old backup..${NC}"
+        rm -rfv ~/games/duke3d/eduke32.bk
+    else
+        echo -e "${YELLOW}==>> No Backups found.. ${NC}"
+    fi
+
+    if [ -f ~/games/duke3d/eduke32 ]; then
+        echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
+        mv -fv ~/games/duke3d/eduke32 ~/games/duke3d/eduke32.bk
+    else
+        echo -e "${YELLOW}==>> Original executable not found, Nothing to backup${NC}"
+    fi
+
     echo -e "${YELLOW} =>> Copying executables.${NC}"
     cp -rfv eduke32 ~/games/duke3d
     cp -rfv mapster32 ~/games/duke3d
@@ -592,9 +609,16 @@ fallout2_ce()
     log "INFO" "==>> Starting fallout2_ce build..."
     echo -e "${YELLOW}==>> Starting fallout2_ce build..${NC}"
     cd ~/src/fallout2_ce
-    cmake -B build -Wno-dev
+    cmake -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev
     cmake --build build --config release -j$(nproc)
     cd build
+
+    if [[ ! -d  ~/games/fallout2 ]]; then
+        echo -e "${MAGENTA} =>> Destination folder does not exist.${NC}"
+        echo -e "${YELLOW} =>> Creating ~/src/fallout2_ce.${NC}"
+        mkdir -pv ~/games/fallout2
+    fi
+
     echo -e "${YELLOW} =>> Copying executable.${NC}"
     cp -Rfv fallout2-ce ~/games/fallout2
     cd ..
@@ -690,8 +714,13 @@ retroarch()
         echo -e "${YELLOW} =>> No backups found..${NC}"
     fi
 
-    echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
-    mv -fv ~/games/retroarch/retroarch ~/games/retroarch/retroarch.bk
+    if [ -f  ~/games/retroarch/retroarch ]; then
+        echo -e "${YELLOW} =>> Backing up existing executable..${NC}"
+        mv -fv ~/games/retroarch/retroarch ~/games/retroarch/retroarch.bk
+    else
+        echo -e "${YELLOW} =>> Original executable not found. Nothing to backup${NC}"
+    fi
+
     echo -e "${YELLOW} =>> Copying executable..${NC}"
     cp -Rfv retroarch ~/games/retroarch
 	echo -e "${YELLOW} =>> Cleaning Build tree...${NC}"
@@ -763,7 +792,7 @@ repos() {
         "daedalOS")
             daedalOS
             ;;
-        "devilutionX")
+        "DevilutionX")
             devilutionX
             ;;
         "eduke32")
@@ -805,18 +834,14 @@ build_updated_repos() {
 
     # Process repositories
     for repo in "${updated_dirs[@]}"; do
-        # Build once
         if ! repos "$repo"; then
             echo -e "${RED}==> Failed to build repository:${NC} $repo"
             log "ERROR" "Failed to build repository: $repo"
             continue
         fi
 
-        # Monitor CPU temperature after the build
         if ! monitor_cpu_temperature 97; then
             local current_temp=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
-            
-            # Attempt to restore CPU governor
             echo -e "${RED}!! High CPU temperature detected: ${current_temp}°C${NC}"
             echo -e "${YELLOW}==> Attempting to restore CPU governor...${NC}"
             log "WARNING" "Restored CPU governor due to high CPU temperatures (${current_temp}°C)"
@@ -833,13 +858,12 @@ build_updated_repos() {
             done
             echo
 
-            # User response
             if [[ "$response" =~ ^[Yy]$ ]]; then
                 echo -e "${GREEN}==> Continuing builds..${NC}"
-                log "WARNING" "User chose to continue build despite high CPU temperature (${current_temp}°C)"
+                log "WARNING" "Continuing build despite high CPU temperature (${current_temp}°C)"
             else
                 echo -e "${RED}Build process stopped due to high CPU temperature.${NC} (${current_temp}°C)"
-                log "INFO" "Build stopped by user due to high CPU temperature (${current_temp}°C)"
+                log "INFO" "Build stopped due to high CPU temperature (${current_temp}°C)"
                 break
             fi
         fi
@@ -847,6 +871,7 @@ build_updated_repos() {
 }
 
 main() {
+    trap 'cleanup' EXIT INT TERM
 
     parser "$@"
     if ! check_system_resources; then
@@ -863,20 +888,16 @@ main() {
     # check background process
     if ! ps -p $SUDO_KEEPER_PID > /dev/null; then
         log "ERROR" "Failed to start sudo keeper process"
-        echo -e "${RED}!! Failed to start sudo keeper process. Continuing without background sudo refresh.${NC}"
+        echo -e "${RED}!! Failed to start sudo keeper process. Continuing without refreshing sudo.${NC}"
         unset SUDO_KEEPER_PID
     else
         log "INFO" "Sudo keeper process started successfully (Child PID: $SUDO_KEEPER_PID)"
     fi
 
-    # cleanup
-    trap 'cleanup' EXIT INT TERM
-
     if set_cpu_governor; then
         build_updated_repos
         current_temp
     fi
-    echo -e "${YELLOW}==>> All Done. Exiting..${NC}"
 }
 
 main "$@"
