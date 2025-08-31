@@ -46,7 +46,7 @@ git clone https://github.com/Made2Flex/stash_n_pull.git
 
 ## Disclaimer ⚠️
 
-This script comes as is, with no warranty. Use it at your own risk!
+This script comes as is, with no guarantee. Use it at your own risk!
 
 ## Author 👤
 
