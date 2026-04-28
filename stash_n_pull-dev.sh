@@ -21,7 +21,7 @@ author() {
     local colors=("\033[1;31m" "\033[1;33m" "\033[1;36m" "\033[1;35m" "\033[0;32m" "\033[0;34m")
     local NC="\033[0m"
     local delay=0.1
-    local iterations=${2:-5}  # customize as needed
+    local iterations=${2:-5}  # customizable
 
     {
         for ((i=1; i<=iterations; i++)); do
@@ -67,25 +67,24 @@ show_header() {
 
 # Function to greet the user
 greet_user() {
-    local username=$(whoami)
-    echo -e "${YELLOW}Hello, $username ${NC}"
+    echo -e "${YELLOW}Hello, $USER${NC}"
 }
 
 # Function to display help information
 show_help() {
-    echo -e "${MAGENTA}Maintains GitHub's Repositories${NC}"
+    echo -e "${GREEN}Maintains GitHub's Repositories${NC}"
     echo
-    echo -e "${LIGHT_BLUE}Usage:${NC} ${GREEN}$0${NC} ${BLUE}[OPTIONS]${NC}"
+    echo -e "${BLUE}Usage:${NC} $0$ ${BLUE}[OPTIONS]${NC}"
     echo
-    echo -e "${LIGHT_BLUE}Options:${NC}"
+    echo -e "${BLUE}Options:${NC}"
     echo "  -h, --help     Display this help message and exit"
     echo
-    echo -e "${LIGHT_BLUE}This script will:${NC}"
-    echo -e "${GREEN}  1. Stash changes${NC}"
-    echo -e "${GREEN}  2. Pull in new changes recursively with modules${NC}"
-    echo -e "${GREEN}  3. Offer to build updated Repositories${NC}"
+    echo -e "$BLUE}This script will:${NC}"
+    echo "  1. Stash changes"
+    echo "  2. Pull in new changes recursively with modules"
+    echo "  3. Offer to build updated Repositories"
     echo
-    echo -e "Note: This script comes as is, with ${YELLOW}NO GUARANTEE!${NC}"
+    echo -e "${YELLOW}Note:${NC} This script comes as is, with ${RED}NO GUARANTEE!${NC}"
     exit 0
 }
 
@@ -150,7 +149,6 @@ confirm_action() {
 }
 
 # Function to check if a repository is private
-# TODO: git doesn't accept passwords anymore. ask for keys
 is_it_private() {
     local repo_dir="$1"
     local git_config="$repo_dir/.git/config"
@@ -159,7 +157,7 @@ is_it_private() {
     # Check if .git/config exists
     if [[ ! -f "$git_config" ]]; then
         echo -e "${RED}   ~> Not a valid Git repository: $(basename "$repo_dir")${NC}"
-        return 1
+        return 2
     fi
 
     # Get the remote URL
@@ -168,46 +166,18 @@ is_it_private() {
     # Check if we got a valid URL
     if [[ -z "$remote_url" ]]; then
         echo -e "${YELLOW} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
-        return 1
+        return 2
     fi
 
-    # attempt to access without credentials
-    if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
-        return 0
-    else
-        echo -e "${YELLOW} ->> Repository appears to be private: $(basename "$repo_dir")${NC}"
-        
-        # Ask user if they want to enter credentials
-        printf "${LIGHT_BLUE}Would you like to enter credentials for this repo? (y/N): ${NC}"
-        read -r enter_creds
-        if [[ "$enter_creds" =~ ^[Yy]$ ]]; then
-            if [[ "$remote_url" =~ ^https:// ]]; then
-                echo -e "${BLUE} ->> HTTPS repository detected${NC}"
-                read -rp "Enter username: " git_username
-                read -rsp "Enter password: " git_password
-                echo
-                git -C "$repo_dir" config --local credential.helper "store --file ~/.git-credentials-temp"
-                echo "https://$git_username:$git_password@${remote_url#https://}" > ~/.git-credentials-temp
-                
-                # Test credentials
-                if git -C "$repo_dir" ls-remote --exit-code &>/dev/null; then
-                    return 0
-                else
-                    echo -e "${RED} ->> Authentication failed${NC}"
-                fi
-            else
-                echo -e "${BLUE} ->> SSH repository detected - ensure your SSH key is properly configured${NC}"
-            fi
+    if [[ "$remote_url" == https://* ]]; then
+        if ! (cd "$repo_dir" && GIT_TERMINAL_PROMPT=0 git fetch --dry-run &>/dev/null); then
+            echo -e "${YELLOW}  ~>> Private repository detected: ${RED}$(basename "$repo_dir")${NC}"
+            echo -e "${YELLOW}==>> Skipping private repository: $(basename "$repo_dir")${NC}"
+            return 2
         fi
-        
-        # Clean up temporary credentials
-        if [[ -f ~/.git-credentials-temp ]]; then
-            rm -f ~/.git-credentials-temp
-            git -C "$repo_dir" config --local --unset credential.helper
-        fi
-        
-        return 1
     fi
+
+    return 0  # Repository is accessible
 }
 
 # Function to stash and pull in all directories under ~/src/
@@ -222,7 +192,6 @@ stash_pull() {
                 echo -e "${YELLOW}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
 
-                # Check if repository is private and handle authentication
                 if ! is_it_private "$dir"; then
                     cd - > /dev/null || continue
                     continue
@@ -231,11 +200,12 @@ stash_pull() {
                 # Get current and remote HEAD hashes
                 local current_hash=$(git rev-parse HEAD)
                 git fetch --quiet
+
                 local remote_hash=$(git rev-parse @{u})
 
                 # Compare hashes
                 if [ "$current_hash" != "$remote_hash" ]; then
-                    # Perform the pull if updates are available
+                    # pull if updates are available
                     git pull --autostash --recurse-submodules
                     updated_dirs+=("$(basename "$dir")")
                     echo -e "${BLUE}==>> Repository updated successfully${NC}"
@@ -269,7 +239,6 @@ stash_pull() {
 }
 
 # Function to handle dependencies for src_builder
-# TODO: Proper Pre-check
 build_deps() {
     local required_deps=(make gcc cmake ninja)  # Core dependencies for building
     local missing_deps=()
@@ -285,11 +254,11 @@ build_deps() {
         echo -e "${RED}! Missing core build dependencies: ${missing_deps[*]}${NC}"
         echo -e "${BLUE} =>> Note, each repo has its own build dependencies. Refer to their README.md file.${NC}"
 
-        printf "${LIGHT_BLUE}Do you want to install them automatically? (y/N/pre-check only): ${NC}"
+        printf "${LIGHT_BLUE}Do you want to install build dependencies automatically? (y/N/pre-check only): ${NC}"
         read -r response
         response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
 
-        if [[ "$response" == "y" || "$response" == "yes" || -z "$answer" ]]; then
+        if [[ "$response" == "y" || "$response" == "yes" || -z "$response" ]]; then
             echo -e "${YELLOW} =>> Installing missing dependencies...${NC}"
             if command -v apt &>/dev/null; then
                 sudo apt update && sudo apt install -y "${missing_deps[@]}"
@@ -300,14 +269,29 @@ build_deps() {
                 return 1
             fi
         elif [[ "$response" == "pre-check only" ]]; then
-            echo -e "${LIGHT_BLUE}==>> Pre-check completed. Please install the following manually: ${missing_deps[*]}${NC}"
+            # Helper: Report missing dependencies
+            local actually_missing=()
+            for dep in "${required_deps[@]}"; do
+                if ! command -v "$dep" &>/dev/null; then
+                    actually_missing+=("$dep")
+                fi
+            done
+
+            if [ ${#actually_missing[@]} -eq 0 ]; then
+                echo -e "${GREEN}==>> Pre-check: All required build dependencies are present!${NC}"
+            else
+                echo -e "${LIGHT_BLUE}==>> Pre-check results:${NC}"
+                echo -e "${RED}   Missing the following core build dependencies:${NC} ${actually_missing[*]}"
+                echo -e "${BLUE}==>> Please install them manually before proceeding.${NC}"
+            fi
             return 1
+
         else
             echo -e "${RED}  >< Skipping dependency installation.${NC}"
             return 1
         fi
     else
-        echo -e "${GREEN}  => All required Core dependencies are ✓installed.${NC}"
+        echo -e "${GREEN}==>> All required Core dependencies are ✓installed.${NC}"
     fi
     return 0
 }
@@ -321,7 +305,7 @@ run_src_builder() {
     while true; do
         read -rp "$(echo -e "${LIGHT_BLUE}Do you want to build updated repos? (yes/no/select)${NC}")" answer
 
-        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')  # Normalize input
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
 
         if [[ "$answer" == "yes" || "$answer" == "y" || -z "$answer" ]]; then
             echo -e "${YELLOW}==>> Attempting to build all updated repositories...${NC}"
@@ -409,7 +393,7 @@ run_src_builder() {
     done
 }
 
-# Alchemist Den
+# Alchemist's Den
 main() {
     parser "$@"
     show_header
