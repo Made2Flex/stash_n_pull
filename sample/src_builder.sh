@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-SCRIPT_VERSION="1.2.6"
+SCRIPT_VERSION="1.2.9"
 SCRIPT_NAME=$(basename "$0")
 # Qnk6IE1hZGUyRmxleA==
 
