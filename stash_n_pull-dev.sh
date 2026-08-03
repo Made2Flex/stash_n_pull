@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+VERSION="0.1.0"
+
 set -euo pipefail
 # -e: exit on error
 # -u: treat unset variables as an error
@@ -68,6 +70,7 @@ show_header() {
 # Function to greet the user
 greet_user() {
     echo -e "${YELLOW}Hello, $USER${NC}"
+    exit 0
 }
 
 # Function to display help information
@@ -88,12 +91,20 @@ show_help() {
     exit 0
 }
 
+show_version() {
+    echo -e "${GREEN}Version: $VERSION${NC}"
+    exit 0
+}
+
 # Function to parse help
 parser() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)
                 show_help
+                ;;
+            -v|--version)
+                show_version
                 ;;
             *)
                 echo -e "${RED}Error: This script does not accept arguments${NC}"
@@ -148,36 +159,32 @@ confirm_action() {
     fi
 }
 
-# Function to check if a repository is private
-is_it_private() {
+# Check if repository is accessible
+is_repo_accessible() {
     local repo_dir="$1"
-    local git_config="$repo_dir/.git/config"
+    local repo_name
     local remote_url
 
-    # Check if .git/config exists
-    if [[ ! -f "$git_config" ]]; then
-        echo -e "${RED}   ~> Not a valid Git repository: $(basename "$repo_dir")${NC}"
-        return 2
+    repo_name=$(basename "$repo_dir")
+
+    if [[ ! -d "$repo_dir/.git" ]]; then
+        echo -e "${RED}   ~> Not a valid Git repository: ${repo_name}${NC}"
+        return 1
     fi
 
-    # Get the remote URL
-    remote_url=$(git -C "$repo_dir" config --get remote.origin.url 2>/dev/null)
+    remote_url=$(git -C "$repo_dir" config --get remote.origin.url 2>/dev/null || true)
 
-    # Check if we got a valid URL
     if [[ -z "$remote_url" ]]; then
-        echo -e "${YELLOW} ->> No remote URL found for: $(basename "$repo_dir")${NC}"
-        return 2
+        echo -e "${YELLOW} ->> No remote URL found: ${repo_name}${NC}"
+        return 1
     fi
 
-    if [[ "$remote_url" == https://* ]]; then
-        if ! (cd "$repo_dir" && GIT_TERMINAL_PROMPT=0 git fetch --dry-run &>/dev/null); then
-            echo -e "${YELLOW}  ~>> Private repository detected: ${RED}$(basename "$repo_dir")${NC}"
-            echo -e "${YELLOW}==>> Skipping private repository: $(basename "$repo_dir")${NC}"
-            return 2
-        fi
+    if ! GIT_TERMINAL_PROMPT=0 git -C "$repo_dir" fetch --dry-run &>/dev/null; then
+        echo -e "${YELLOW}  ~>> Skipping inaccessible repository: ${RED}${repo_name}${NC}"
+        return 1
     fi
 
-    return 0  # Repository is accessible
+    return 0
 }
 
 # Function to stash and pull in all directories under ~/src/
@@ -192,14 +199,14 @@ stash_pull() {
                 echo -e "${YELLOW}==>> Processing repository: $(basename "$dir")${NC}"
                 cd "$dir" || continue
 
-                if ! is_it_private "$dir"; then
+                if ! is_repo_accessible "$dir"; then
                     cd - > /dev/null || continue
                     continue
                 fi
 
                 # Get current and remote HEAD hashes
                 local current_hash=$(git rev-parse HEAD)
-                git fetch --quiet
+                GIT_TERMINAL_PROMPT=0 git fetch --quiet
 
                 local remote_hash=$(git rev-parse @{u})
 
@@ -239,6 +246,7 @@ stash_pull() {
 }
 
 # Function to handle dependencies for src_builder
+# TODO: Proper Pre-check
 build_deps() {
     local required_deps=(make gcc cmake ninja)  # Core dependencies for building
     local missing_deps=()

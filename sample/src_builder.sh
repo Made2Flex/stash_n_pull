@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-SCRIPT_VERSION="1.2.8"
+SCRIPT_VERSION="1.2.6"
 SCRIPT_NAME=$(basename "$0")
 # Qnk6IE1hZGUyRmxleA==
 
@@ -123,7 +123,7 @@ cleanup() {
     restore_cpu_governor
 
     # stop sudo keeper process if its running
-    if [[ -n "$SUDO_KEEPER_PID" ]]; then
+    if [[ -n "${SUDO_KEEPER_PID:-}" ]]; then
         if ps -p $SUDO_KEEPER_PID > /dev/null; then
             log "INFO" "Stopping sudo keeper process (PID: $SUDO_KEEPER_PID)"
             if kill "$SUDO_KEEPER_PID" 2>/dev/null; then
@@ -141,6 +141,7 @@ cleanup() {
 
     # clear cached password
     set +u
+    sudo -k >/dev/null 2>&1
     unset SUDO_PASSWORD
     set -u
     log "INFO" "Cleared cached sudo password"
@@ -151,7 +152,7 @@ cleanup() {
 }
 
 monitor_cpu_temperature() {
-    local max_safe_temp=${1:-97}  # default (97°C)
+    local max_safe_temp=${1:-97}  # Change default (97°C)
     local temp_file="/sys/class/thermal/thermal_zone0/temp"
 
     # Check if temperature file exists
@@ -186,7 +187,7 @@ monitor_cpu_temperature() {
         #return 1
     else
         # Log temperatures
-        if [[ $temp -gt 97 ]]; then
+        if [[ $temp -gt 87 ]]; then
             log "WARNING" "High CPU temperature detected: ${temp}°C"
             echo -e "${YELLOW}!! High CPU temperature: ${temp}°C.${NC}"
         fi
@@ -239,84 +240,52 @@ check_system_resources() {
     monitor_cpu_temperature 97
 }
 
-# Function to cache the sudo password for the current session
-cache_sudo_password() {
-    llocal attempts=0
+authenticate_sudo() {
+    local attempts=0
     local max_attempts=3
-    local tmp_path
-
-    # Remove any previous pass file
-    if [[ -n "${SUDO_PASS_FILE:-}" && -f "$SUDO_PASS_FILE" ]]; then
-        rm -f "$SUDO_PASS_FILE"
-    fi
-
-    # mktemp file
-    tmp_path=$(mktemp)
-    chmod 600 "$tmp_path"
-    SUDO_PASS_FILE="$tmp_path"
 
     while (( attempts < max_attempts )); do
-        echo -ne "${MAGENTA}Please, enter your sudo password: ${NC}"
-        if ! read -s -t 60 password_input; then
-            echo -e "\n${RED}Error: Password input timed out after 60 seconds.${NC}"
-            rm -f "$SUDO_PASS_FILE"
-            exit 1
-        fi
-        echo
-
-        # validate password
-        if printf "%s\n" "$password_input" | sudo -S -l &>/dev/null; then
-            # Store it if sudo is valid
-            printf "%s\n" "$password_input" > "$SUDO_PASS_FILE"
-            chmod 600 "$SUDO_PASS_FILE"
-            unset password_input
+        if sudo -v; then
             return 0
         else
-            attempts=$((attempts+1))
-            echo -e "${RED}Incorrect password. Please try again.${NC}"
-            # Overwrite previous credential
-            :> "$SUDO_PASS_FILE"
+            attempts=$((attempts + 1))
+            log "ERROR" "Incorrect sudo password or failed authentication (Attempt $attempts/$max_attempts)"
+            echo -e "${RED}Incorrect sudo password or failed authentication. Please try again.${NC}" >&2
         fi
-        unset password_input
     done
 
-    echo -e "${RED}Maximum password attempts reached. Exiting.${NC}"
-    rm -f "$SUDO_PASS_FILE"
+    log "ERROR" "Maximum sudo password attempts reached. Exiting."
+    echo -e "${RED}Maximum sudo password attempts reached. Exiting.${NC}" >&2
     exit 1
 }
 
-# Function to keep sudo alive during script execution
 keep_sudo_alive() {
-    log "INFO" "Running keep_sudo_alive() (PID: $$)"
+    local interval=60
 
-     while true; do
-        if [[ -n "${SUDO_PASS_FILE:-}" && -s "$SUDO_PASS_FILE" ]]; then
-            # refresh only.
-            if ! sudo -S -p '' -v < "$SUDO_PASS_FILE" 2>/dev/null; then
-                echo -e "${RED}!! Failed to refresh sudo.${NC}" >&2
-                return 1
-            fi
-        else
-            echo -e "${RED}!! SUDO_PASS_FILE disappeared; cannot keep sudo alive.${NC}" >&2
-            return 1
+    while true; do
+        sleep "$interval"
+
+        if sudo -n -v >/dev/null 2>&1; then
+            continue
         fi
-        log "DEBUG" "Started sudo keep in the background"
-        sleep 60
+
+        echo -e "${RED}!! Failed to refresh sudo credentials.${NC}" >&2
+        echo -e "${ORANGE}   >> Sudo authentication expired.${NC}" >&2
+        log "ERROR" "Failed to refresh sudo credentials in keep_sudo_alive. Sudo authentication expired??"
+        return 1
     done
 }
 
-# Function to use the cached sudo password
+trap 'cleanup' EXIT INT TERM HUP QUIT ABRT PIPE ALRM USR1 USR2 TSTP TTIN TTOU
+
 sudo_cached() {
-    local command="$*"
-    # Test file
-    if [[ -z "${SUDO_PASS_FILE:-}" || ! -s "$SUDO_PASS_FILE" ]]; then
-        echo -e "${RED}[ERROR] SUDO password not cached.${NC}" >&2
+    if sudo -n bash -c "$*"; then
+        return 0
+    else
+        log "ERROR" "Sudo authentication expired or command failed: $*"
+        echo -e "${RED}[ERROR] Sudo authentication expired or command failed. Please re-authenticate using 'sudo -v'.${NC}" >&2
         return 1
     fi
-    # -p '' to suppress extra prompts
-    # Reset sudo timestamp (-k) before running, to hopefully guarantee prompt usage
-    sudo -S -p '' -k bash -c "$command" < "$SUDO_PASS_FILE"
-    return $?
 }
 
 # Function to temporarily set the CPU governor
@@ -356,17 +325,7 @@ set_cpu_governor() {
         done
     fi
 
-    monitor_cpu_temperature 97
-    # check CPU temperature
-#     if [[ -f /sys/class/thermal/thermal_zone0/temp ]]; then
-#         local temp=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
-#         log "INFO" "Current System temperature: $temp°C"
-#         if [[ $temp -gt 87 ]]; then
-#             log "WARNING" "CPU temperature is high ($temp°C)"
-#             echo -e "${RED}!! CPU temperature is high ($temp°C). Not changing governor.${NC}"
-#             return 1
-#         fi
-#     fi
+    monitor_cpu_temperature
 
     # Determine the governor to set based on power status
     if [[ "${ac_or_battery:-}" == "Discharging" ]]; then
@@ -427,11 +386,9 @@ restore_cpu_governor() {
         return 1
     fi
 
-    # Check if SUDO_PASSWORD is set
-    if [[ -z "$SUDO_PASSWORD" ]]; then
-        log "ERROR" "SUDO_PASSWORD is not set. Cannot restore CPU governor."
-        echo -e "${RED}!! SUDO_PASSWORD is not set. Cannot restore CPU governor.${NC}"
-        return 1
+    # Check if we can sudo without password
+    if ! sudo -n true 2>/dev/null; then
+        sudo -v || { log "ERROR" "Failed to authenticate with sudo"; return 1; }
     fi
 
     # Get current governor to check if it needs restoration
@@ -858,29 +815,27 @@ build_updated_repos() {
 }
 
 main() {
-
     parser "$@"
+
     if ! check_system_resources; then
         echo -e "${RED}!! System resources check failed. Aborting build process.${NC}"
         cleanup
         exit 1
     fi
 
-    cache_sudo_password
+    authenticate_sudo
+
     log "INFO" "Starting sudo keep-alive background process (Parent PID: $$)"
     keep_sudo_alive &
     SUDO_KEEPER_PID=$!
-    # check background process
+
     if ! ps -p $SUDO_KEEPER_PID > /dev/null; then
         log "ERROR" "Failed to start sudo keeper process"
         echo -e "${RED}!! Failed to start sudo keeper process. Continuing without refreshing sudo.${NC}"
-        unset SUDO_KEEPER_PID
+        cleanup
     else
         log "INFO" "Sudo keeper process started successfully (Child PID: $SUDO_KEEPER_PID)"
     fi
-
-    # cleanup
-    trap 'cleanup' EXIT INT TERM KILL HUP QUIT ABRT PIPE ALRM USR1 USR2 STOP TSTP TTIN TTOU
 
     if set_cpu_governor; then
         build_updated_repos
